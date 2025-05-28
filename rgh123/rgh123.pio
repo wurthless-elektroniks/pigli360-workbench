@@ -1,0 +1,38 @@
+
+.program rgh123
+    ; grab parameters before execution
+    pull noblock
+    mov x,osr
+    pull noblock
+    mov y,osr
+
+    ; PIO program execution should start at POST 0xD6
+    wait 0 pin 1     ; wait for POST 0xD8
+    wait 1 pin 0     ; wait for POST 0xD9 (slowdown happens here)
+
+pll_assert_delay:
+    jmp x--, pll_assert_delay
+    set pins,1                  ; assert CPU_PLL_BYPASS 
+    
+    wait 1 pin 1                ; wait for POST 0xDA
+reset_delay:
+    jmp y--, reset_delay        ; then delay until it's time to send the /RESET pulse
+    
+    ; strobe /RESET
+    set pindirs,3 [1]  ; pulse /RESET low for 2 cycles (you may need to fine tune this)
+
+    set pins,3         ; pull /RESET high instead of letting it drift upward.
+                       ; DANGER - this is interfacing 3v3 to a 1v1 line.
+                       ; the longer this is on, the more damage you'll cause to your CPU.
+                       ; and yes, glitch chips really do interface 3v3 to the CPU.
+
+    set pindirs,1      ; set /RESET back to input
+    set pins,1         ; clear /RESET internally, keep PLL bypass on
+    
+    ; signal to MCU that we're done
+    push noblock ; value written doesn't matter
+
+    ; spin forever
+    .wrap_target
+    nop
+    .wrap
