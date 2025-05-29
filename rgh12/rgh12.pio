@@ -26,7 +26,8 @@ reset_delay:
     jmp y--, reset_delay        ; then delay until it's time to send the /RESET pulse
     
     ; strobe /RESET
-    set pindirs,3 [1]  ; pulse /RESET low for 2 cycles (you may need to fine tune this)
+    set pindirs,3 [3]  ; pulse /RESET low for 4 cycles
+                       ; my console likes 4 cycles more than it does 2, although it can boot with 2
 
     set pins,3         ; pull /RESET high instead of letting it drift upward.
                        ; DANGER - this is interfacing 3v3 to a 1v1 line.
@@ -34,17 +35,9 @@ reset_delay:
                        ; and yes, glitch chips really do interface 3v3 to the CPU.
 
     set pindirs,1      ; set /RESET back to input
-    set pins,1         ; clear /RESET internally, keep PLL bypass on
-    
-    ; delay before PLL de-assert
-    set y,31
-pll_deassert_delay_1:
-    set x,31
-pll_deassert_delay_2:
-    jmp x--,pll_deassert_delay_2 [31]
-    jmp y--,pll_deassert_delay_1
-
-    ; de-assert PLL
+    nop
+    nop
+    nop
     set pins,0
 
     ; spin forever

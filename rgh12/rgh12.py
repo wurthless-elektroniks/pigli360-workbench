@@ -10,7 +10,7 @@ Further reading:
 https://github.com/Octal450/RGH1.2-V2-Phat/tree/master/matrix-coolrunner
 '''
 from time import sleep, ticks_us
-from machine import Pin,mem32
+from machine import Pin,mem32,freq
 import rp2
 from rp2 import PIO
 
@@ -55,19 +55,15 @@ def rgh12():
     wait(1, pin, 1)                       # 8
     label("9")
     jmp(y_dec, "9")                       # 9
-    set(pindirs, 3)                  [1]  # 10
+    set(pindirs, 3)                  [3]  # 10
     set(pins, 3)                          # 11
     set(pindirs, 1)                       # 12
-    set(pins, 1)                          # 13
-    set(y, 31)                            # 14
-    label("15")
-    set(x, 31)                            # 15
-    label("16")
-    jmp(x_dec, "16")                 [31] # 16
-    jmp(y_dec, "15")                      # 17
-    set(pins, 0)                          # 18
+    nop()                                 # 13
+    nop()                                 # 14
+    nop()                                 # 15
+    set(pins, 0)                          # 16
     wrap_target()
-    nop()                                 # 19
+    nop()                                 # 17
     wrap()
 
 pio_sm = None
@@ -89,10 +85,8 @@ def init_sm(reset_assert_delay):
     pio_sm.active(0)
     print("restarted sm")
 
-    # drive /RESET line at full power (12 mA)
-    mem32[0x4001c004 + (15*4)] = (mem32[0x4001c004 + (15*4)] & 0b11001111) | 0b00110000
-    
-    if ((mem32[0x4001c004 + (15*4)]) & 0b00110000) == 0b00110000:
+    mem32[0x4001c004 + (14*4)] = 0b01110011
+    if mem32[0x4001c004 + (14*4)] == 0b01110011:
         print("full steam ahead!!")
     else:
         raise RuntimeError("cannot set I/O drive...")
@@ -172,7 +166,7 @@ def do_reset_glitch() -> int:
 
         if this_post == 0xDB:
             print("got candidate!!!")
-            return 1
+            # return 1
 
         if this_post == 0x00:
             print("FAIL: SMC timed out")
@@ -187,8 +181,16 @@ def do_reset_glitch() -> int:
             return 1
 
 def do_reset_glitch_loop():
-    reset_trial = 349821 # int(48 * 7296) # int(48 * 7400) # = 349821
+    # this is the key to the whole thing - you have to set frequency
+    # to a multiple of 12 MHz, or this shit won't work
+    freq(192000000)
+
     
+    # 349821 is timing file 21 and works... ehh... not great
+    # 349819 boots in a couple of attempts
+    # 349818 and a reset pulse width of 4 cycles instaboots my test falcon almost every time
+    reset_trial = 349818
+
     while True:
         print(f"start trial of: {reset_trial}")
 
@@ -199,5 +201,5 @@ def do_reset_glitch_loop():
         if result == 2:
             init_sm(0)
             return
-        elif result != 0:
-            reset_trial += 1
+        # elif result != 0:
+            # reset_trial -= 1
