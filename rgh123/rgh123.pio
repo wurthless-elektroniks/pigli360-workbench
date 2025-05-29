@@ -27,8 +27,13 @@ reset_delay:
                        ; and yes, glitch chips really do interface 3v3 to the CPU.
 
     set pindirs,1      ; set /RESET back to input
+
     set pins,1         ; clear /RESET internally, keep PLL bypass on
     
+    set x,31
+pll_deassert_delay:
+    jmp x--, pll_deassert_delay [31]
+
     ; signal to MCU that we're done
     push noblock ; value written doesn't matter
 

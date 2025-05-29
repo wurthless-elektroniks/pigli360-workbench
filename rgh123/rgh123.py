@@ -9,6 +9,8 @@ Bugs:
   communication can have problems leading to RROD 0010. Both mean you
   have to restart the script and/or the system after about 10 attempts.
 
+  
+
 '''
 
 from time import sleep, ticks_us
@@ -16,7 +18,7 @@ from machine import Pin,mem32
 import rp2
 from rp2 import PIO
 
-from machine import SoftI2C
+from machine import SoftI2C,freq
 
 # POST monitoring must be done as fast as possible
 RP2040_GPIO_IN = 0xD0000004
@@ -57,13 +59,16 @@ def rgh123():
     wait(1, pin, 1)                       # 8
     label("9")
     jmp(y_dec, "9")                       # 9
-    set(pindirs, 3)                  [1]  # 10
+    set(pindirs, 3)                  [2]  # 10
     set(pins, 3)                          # 11
     set(pindirs, 1)                       # 12
     set(pins, 1)                          # 13
-    push(noblock)                         # 14
+    set(x, 31)                            # 14
+    label("15")
+    jmp(x_dec, "15")                 [31] # 15
+    push(noblock)                         # 16
     wrap_target()
-    nop()                                 # 15
+    nop()                                 # 17
     wrap()
 
 pio_sm = None
@@ -94,7 +99,7 @@ def init_sm(reset_assert_delay):
         raise RuntimeError("cannot set I/O drive...")
 
     # this is nowhere near precise and has to be tuned
-    pll_delay = 72000000
+    pll_delay = 72686000
 
     # reset delay is around 26.924 ms in RGH3
     # that's about 1292352 cycles @ 48 MHz
@@ -112,25 +117,21 @@ def init_sm(reset_assert_delay):
 
 
 def do_reset_glitch() -> int:
+    i2c = SoftI2C(sda=Pin(8),scl=Pin(9),freq=100000)
+
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D5:
         pass 
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D6:
-        pass 
+        pass
 
-    print("0xD6 arrived - send I2C slowdown...")
+    print("0xD6 arrived, start PIO")
+    pio_sm.active(1)
 
-    CPU_PLL_BYPASS.value(1)
-    i2c = SoftI2C(sda=Pin(8),scl=Pin(9),freq=100000)
-    
     # default clock is [ 0x14, 0x44, 0xE8, 0x08 ]
     # 27 MHz mode is [ 0x14, 0x44, 0xE8, 0x28 ]
     # 15432 also found [ 0x14, 0x44, 0xE8, 0x88 ], maybe this is RGH3's 10 MHz mode?
-    i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x28]))
+    # i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x28]))
 
-    CPU_PLL_BYPASS.value(0)
-
-    print("start PIO...")
-    pio_sm.active(1)
     
 
     last_post = 0
@@ -144,15 +145,21 @@ def do_reset_glitch() -> int:
             t = ticks_us()
             this_post = (v >> 15) & 0xFF
 
+            if last_post != 0xD8 and this_post == 0xD8:
+                print("0xD8 arrived, send I2C")
+                i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x28]))
+
             if last_post != 0xDA and this_post == 0xDA:
                 ticks_DA = t
 
                 # block until PIO is done
                 print("awaiting PIO finish...")
                 pio_sm.get()
-                print("PIO is done")
                 i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
-                CPU_PLL_BYPASS.value(0)
+
+
+                print("PIO is done")
+
 
                 # debugging
                 '''
@@ -164,12 +171,8 @@ def do_reset_glitch() -> int:
             if this_post != last_post:
                 print(f"{this_post:02x}")
                 last_post = this_post
-            
-
-
-            if this_post == 0xDB:
-                print("got candidate!!!")
-                return 1
+                if this_post == 0xDB:
+                    print("got candidate!!!")
 
             if this_post == 0x00:
                 print("FAIL: SMC timed out")
@@ -180,13 +183,23 @@ def do_reset_glitch() -> int:
                 
                 # this time is nowhere near accurate thanks to micropython's interpreted nature
                 # but it is close to what it should be, and that's what counts
-                #print(f"-> DA -> F2 = {t-ticks_DA} usec"
+                #
+                # note also that if your reset wait value is too high, it will
+                # cause this result to be skewed upwards.
+                print(f"-> DA -> F2 = {t-ticks_DA} usec")
                 return 1
     finally:
         i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
 
 def do_reset_glitch_loop():
-    reset_trial = 1292454  # 349821 # int(48 * 7296) # int(48 * 7400) # = 349821
+    # fails around 1366368 / 28447 usec
+
+    freq(192000000)
+    
+    # 0xDB candidates are: 1292328, 1292329, 1292330
+    # this does get CB_B executing, but then the CPU crashes at 0x22.
+    # occasionally weird POST codes show up (0x88, 0x44, etc.)
+    reset_trial = 1292329 # 349821 # int(48 * 7296) # int(48 * 7400) # = 349821
     
     while True:
         print(f"start trial of: {reset_trial}")
@@ -198,5 +211,5 @@ def do_reset_glitch_loop():
         if result == 2:
             init_sm(0)
             return
-        elif result != 0:
-            reset_trial += 1
+        # elif result != 0:
+        # reset_trial -= 1
