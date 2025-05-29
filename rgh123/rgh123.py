@@ -59,16 +59,13 @@ def rgh123():
     wait(1, pin, 1)                       # 8
     label("9")
     jmp(y_dec, "9")                       # 9
-    set(pindirs, 3)                  [2]  # 10
+    set(pindirs, 3)                  [3]  # 10
     set(pins, 3)                          # 11
     set(pindirs, 1)                       # 12
-    set(pins, 1)                          # 13
-    set(x, 31)                            # 14
-    label("15")
-    jmp(x_dec, "15")                 [31] # 15
-    push(noblock)                         # 16
+    set(pins, 0)                          # 13
+    push(noblock)                         # 14
     wrap_target()
-    nop()                                 # 17
+    nop()                                 # 15
     wrap()
 
 pio_sm = None
@@ -90,13 +87,16 @@ def init_sm(reset_assert_delay):
     pio_sm.active(0)
     print("restarted sm")
 
-    # drive /RESET line at full power (12 mA)
-    mem32[0x4001c004 + (15*4)] = (mem32[0x4001c004 + (15*4)] & 0b11001111) | 0b00110000
-    
-    if ((mem32[0x4001c004 + (15*4)]) & 0b00110000) == 0b00110000:
+    # set /RESET to: input enable, full power drive, pullup/pulldown disabled, schmitt triggered, fast slew rate
+    # it's unbelievable that micropython sets the slew rate to slow by default...
+    mem32[0x4001c004 + (14*4)] = 0b01110011
+    if mem32[0x4001c004 + (14*4)] == 0b01110011:
         print("full steam ahead!!")
     else:
         raise RuntimeError("cannot set I/O drive...")
+
+    # set slew rate to fast for PLL too
+    mem32[0x4001c004 + (13*4)] |= 1
 
     # this is nowhere near precise and has to be tuned
     pll_delay = 72686000
@@ -199,6 +199,10 @@ def do_reset_glitch_loop():
     # 0xDB candidates are: 1292328, 1292329, 1292330
     # this does get CB_B executing, but then the CPU crashes at 0x22.
     # occasionally weird POST codes show up (0x88, 0x44, etc.)
+    #
+    # it's probably necessary to make a "glitch3" type image that's just a standard
+    # glitch2 image, but with the RGH3 stub in CB_B. tried making this myself but
+    # all it managed to do was brick the console...
     reset_trial = 1292329 # 349821 # int(48 * 7296) # int(48 * 7400) # = 349821
     
     while True:
