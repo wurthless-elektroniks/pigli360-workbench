@@ -1,16 +1,33 @@
 # pigli360 - Experimental/research RGH stuff for Raspberry Pi Pico
 
+![](worldsgreatestmoder.jpg)
+
 Yeah.
 
 ## A helpful note
 
-Nothing in here produces a useful glitcher as-is. The code is buggy and kinda shitty
-and I'm not able to get any useful results with it. This is more experimental than
-anything; maybe I can make it work, maybe not. Either way it's not useful for modding
-your Xbox.
+Nothing in here is intended to be used for serious RGH installations.
+The code is buggy and kinda shitty and although it might work or not, it's definitely
+more experimental than anything you'd want to use.
 
 Other people have managed to produce RGH1.2 implementations on RP2040, so if you want
 to make a RP2040-based glitcher, go looking for those.
+
+## Roadmap/wishlist
+
+Common phat modding methods:
+- RGH1.2: Done, tested working on Falcon, not sure how it will work on Jasper yet
+- EXT_CLK: Planned. EXT_CLK uses far less precise slowdown than PLL (maybe 10-11x slowdown) and as such
+  requires more accurate timings. Some way of getting the RP2040 to run off the 48 MHz system standby
+  clock will be required, most likely using a high speed 74-series counter IC.
+
+Other stuff I could conceptualize:
+- RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC. Not done yet.
+- Method to use I2C to disable the 100 MHz CPU clock and inject a slower clock signal in its place.
+  Should be far more effective than EXT_CLK.
+- Reset glitch attack against the bootrom. All RGH attacks target CB, but none so far have
+  targeted the signature check in the bootrom. Given the 360 has been out for 20 years I'm not
+  getting my hopes up for this one.
 
 ## So why try doing this?
 
@@ -27,3 +44,14 @@ Also I wanted to write this implementation in Micropython to show that you can w
 RGH implementation in slow ass software. RGH3 demonstrated that software-based glitching is
 viable, and it's quite possible that someone could launch a successful attack on a modern 48 MHz
 Cortex microcontroller, no FPGA required. So yeah, this is just a shitpost version of RGH.
+
+## Further reading
+
+These are essential reading for anyone interested in 360 modding.
+
+- [GliGli's writeup on RGH1 and RGH2](https://free60.org/Hacks/Reset_Glitch_Hack/)
+- [15432's writeup on RGH3](https://swarm.ptsecurity.com/xbox-360-security-in-details-the-long-way-to-rgh3/)
+
+## License
+
+Public domain
