@@ -21,10 +21,13 @@ Common phat modding methods:
   requires more accurate timings. Some way of getting the RP2040 to run off the 48 MHz system standby
   clock will be required, most likely using a high speed 74-series counter IC.
 
-Other stuff I could conceptualize:
+Novel concepts for glitching:
 - RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC. Not done yet.
+- EXT+3: Similar concept for Zephyr boards combining EXT_CLK and I2C slowdown. Planned.
+
+Other stuff I could conceptualize:
 - Method to use I2C to disable the 100 MHz CPU clock and inject a slower clock signal in its place.
-  Should be far more effective than EXT_CLK.
+  Should be far more effective than EXT_CLK. Probably hasn't been done because of stability issues.
 - Reset glitch attack against the bootrom. All RGH attacks target CB, but none so far have
   targeted the signature check in the bootrom. Given the 360 has been out for 20 years I'm not
   getting my hopes up for this one.
