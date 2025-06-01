@@ -1,0 +1,24 @@
+.program manclk_reset_only
+    pull noblock
+    mov y,osr
+
+    wait 1 pin 1                ; wait for POST 0xDA
+reset_delay:
+    jmp y--, reset_delay        ; then delay until it's time to send the /RESET pulse
+    
+    ; strobe /RESET
+    set pindirs,2 [3]  ; pulse /RESET low for 4 cycles
+                       
+    set pins,2         ; pull /RESET high instead of letting it drift upward.
+                       ; DANGER - this is interfacing 3v3 to a 1v1 line.
+                       ; the longer this is on, the more damage you'll cause to your CPU.
+                       ; and yes, glitch chips really do interface 3v3 to the CPU.
+
+    set pindirs,1      ; set /RESET back to input
+
+    push noblock       ; let script know we're done
+
+    ; spin forever
+    .wrap_target
+    nop
+    .wrap
