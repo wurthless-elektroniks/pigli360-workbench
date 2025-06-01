@@ -17,13 +17,13 @@ to make a RP2040-based glitcher, go looking for those.
 
 Common phat modding methods:
 - RGH1.2: Done, tested working on Falcon, not sure how it will work on Jasper yet
-- EXT_CLK: Planned. EXT_CLK uses far less precise slowdown than PLL (maybe 10-11x slowdown) and as such
+- EXT_CLK: Doesn't work. EXT_CLK uses far less precise slowdown than PLL (maybe 3-11x slowdown) and as such
   requires more accurate timings. Some way of getting the RP2040 to run off the 48 MHz system standby
   clock will be required, most likely using a high speed 74-series counter IC.
 
 Novel concepts for glitching:
 - RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC. Not done yet.
-- EXT+3: Similar concept for Zephyr boards combining EXT_CLK and I2C slowdown. Planned.
+- EXT+3: Similar concept for Zephyr boards combining EXT_CLK and I2C slowdown. Might be unstable.
 
 Other stuff I could conceptualize:
 - Method to use I2C to disable the 100 MHz CPU clock and inject a slower clock signal in its place.
