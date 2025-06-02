@@ -4,13 +4,12 @@ The method that sounds like a shitpost, but isn't.
 
 This is basically RGH3 but on a microcontroller for better precision.
 
+Status: Not working, gets stuck on POST 0x22 every time.
+
 Bugs:
 - I2C can shit itself several times. SoftI2C can crap out, or HANA/SMC
   communication can have problems leading to RROD 0010. Both mean you
   have to restart the script and/or the system after about 10 attempts.
-
-  
-
 '''
 
 from time import sleep, ticks_us

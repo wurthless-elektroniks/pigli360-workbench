@@ -6,6 +6,8 @@ Do not seriously use this unless you want to be laughed at
 CB POST codes will not be output on a stock console; you must write a XeLL .ecc
 to see them at all.
 
+Status: Works on Falcon, not tested with Jasper yet.
+
 Further reading:
 https://github.com/Octal450/RGH1.2-V2-Phat/tree/master/matrix-coolrunner
 '''

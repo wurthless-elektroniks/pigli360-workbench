@@ -31,6 +31,13 @@ Other stuff I could conceptualize:
 - Reset glitch attack against the bootrom. All RGH attacks target CB, but none so far have
   targeted the signature check in the bootrom. Given the 360 has been out for 20 years I'm not
   getting my hopes up for this one.
+- Power glitch hack against Winchester boards. Setup would likely need to be timed on Corona and
+  monitor NAND accesses, as the Oban CGPU doesn't output POST data. Slowdown would be accomplished
+  by I2C slowdown or a manual clock override. Will be dangerous (latchup inside the CGPU a major
+  concern here) and probably not reliable.
+
+And, of course, the thing we all want:
+- RSA-2048 private key for the CB images so we don't have to do all this crap.
 
 ## So why try doing this?
 
