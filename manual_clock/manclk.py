@@ -2,6 +2,7 @@
 Manual clock attack attempt for Xenon boards
 
 In short: Disable backup clock generator via I2C and substitute our own.
+Likelihod of success: slim.
 
 Xenon boards do not have the HANA as the HANA wasn't a thing at the time.
 Instead they had ANA, which does the same functions (minus HDMI), but its internal
@@ -37,8 +38,12 @@ Obviously, the RP2040 can't generate a stable-enough clock for the CPU to run at
 so we have to turn the clock off, substitute our own, run the glitch,
 then switch the CPU's real clock back on.
 
-Status: Incomplete. Xenon board is now misbehaving and won't accept the 100 MHz clock signals.
-Have to check for damages, maybe reflow chips, etc.
+Status: Not working. Might never work. The clock we feed to the CPU isn't as clean as
+it would expect. 
+
+Bugs:
+- As with RGH1.2.3, I2C can misbehave, leading to ENODEV errors and RRODs.
+  If RROD 0012 or program hangs, you need to unplug and try again.
 '''
 
 from time import sleep, ticks_us
@@ -64,8 +69,7 @@ DBG_CPU_POST_OUT5 = Pin(17, Pin.IN, Pin.PULL_UP)
 DBG_CPU_POST_OUT6 = Pin(16, Pin.IN, Pin.PULL_UP)
 DBG_CPU_POST_OUT7 = Pin(15, Pin.IN, Pin.PULL_UP)
 
-# these MUST be connected to the 3v3 side of the following resistors.
-# twist clock wires together to reduce noise/jitter.
+# connect 33 or 47 ohm resistors in series and connect them to the test points under the PCB
 CPU_CLK_DP_R = Pin(4, Pin.IN) # R3C11
 CPU_CLK_DN_R = Pin(5, Pin.IN) # R3C12
 
@@ -93,9 +97,14 @@ def manclk_reset_only():
     wait(1, pin, 1)                       # 2
     label("3")
     jmp(y_dec, "3")                       # 3
-    nop() #set(pindirs, 2)                  [3]  # 4
-    nop() #set(pins, 2)                          # 5
-    nop() #set(pindirs, 1)                       # 6
+    set(pindirs, 3)                  [3]  # 4
+    nop() [31]
+    nop() [31]
+    nop() [31]
+    nop() [31]
+    nop() [31]
+    set(pins, 3)                          # 5
+    set(pindirs, 1)                       # 6
     push(noblock)                         # 7
     wrap_target()
     nop()                                 # 8
@@ -103,14 +112,12 @@ def manclk_reset_only():
 
 # ---------------------------
 
-# 200 MHz / 256 = 781250 Hz. CPU multiplies it by 32 to get approx 25 MHz
-MANCLK_CLOCK_DIV = 256
-
-FAKE_CLOCK_RATE = int(200000000 / MANCLK_CLOCK_DIV)
+# the actual clock rate/slowdown on the CPU isn't quite clear to me.
+MANCLK_CLOCK_DIV = 32
+FAKE_CLOCK_RATE = int((200000000 / 2) / MANCLK_CLOCK_DIV)
 
 def setup_fake_clock_gen():
-    mem32[0x4001c004 + (4*4)] = 0b01110011
-    mem32[0x4001c004 + (5*4)] = 0b01110011
+
 
     sm = rp2.StateMachine(7, clock_gen, freq = FAKE_CLOCK_RATE, set_base=CPU_CLK_DP_R)
     sm.active(1)
@@ -133,7 +140,7 @@ i2c = SoftI2C(sda=Pin(8),scl=Pin(9),freq=100000)
 
 
 def init_sm(reset_assert_delay):
-    global pio_sm
+    global pio_sm 
     pio_sm = rp2.StateMachine(0, manclk_reset_only, freq = 200000000, in_base=DBG_CPU_POST_OUT7, set_base=CPU_PLL_BYPASS)
 
     pio_sm.active(0)
@@ -171,54 +178,58 @@ def do_reset_glitch() -> int:
     last_post = 0
     ticks_DA = 0
 
-    while True:
-        v = mem32[RP2040_GPIO_IN]
-        t = ticks_us()
-        this_post = (v >> 15) & 0xFF
+    try:
+        while True:
+            v = mem32[RP2040_GPIO_IN] & POST_BITS_MASK
+            t = ticks_us()
+            this_post = (v >> 15) & 0xFF
 
-        if this_post != last_post:
-            print(f"{this_post:02x}")
-            last_post = this_post
-            
-            if this_post == 0xD9:
-                # delay before starting (same delay as in RGH1.2)
-                sleep(0.4096)
+            if this_post != last_post:
+                print(f"{this_post:02x}")
+                last_post = this_post
+                
+                if this_post == 0xD9:
+                    # the closer to 0xDA you get, the less time the PLL will get to stabilize.
+                    # use 0.4096 as a safe value.
+                    sleep(0.39)
 
-                # kill real clock generator
-                i2c.writeto_mem(0x69, 0, bytes([0x01, 0xFD]))
+                    # kill real clock generator
+                    i2c.writeto_mem(0x69, 0, bytes([0x01, 0xFD]))
 
-                # startup fake clock generator
-                setup_fake_clock_gen()
+                    # startup fake clock generator
+                    setup_fake_clock_gen()
 
-                # also start glitcher statemachine
-                pio_sm.active(1)
+                    # also start glitcher statemachine
+                    # pio_sm.active(1)
+
+                if this_post == 0xDB:
+                    print("got candidate!!!")
 
             if this_post == 0xDA:
-                # wait for glitcher to finish
-                pio_sm.get()
+                ticks_DA = t
+                while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == v:
+                    pass
 
-                # stop the fake clock generator and restart real clock generator
-                kill_fake_clock_gen()
-                i2c.writeto_mem(0x69, 0, bytes([0x01, 0xFF]))
-
-            if this_post == 0xDB:
-                print("got candidate!!!")
-
-
-        if this_post == 0x00:
-            print("FAIL: SMC timed out")
-            return 0
-        
-        if this_post == 0xF2:
-            print("FAIL: hash check mismatch")
-            print(f"-> DA -> F2 = {t-ticks_DA} usec")
-            return 1
+            if this_post == 0x00:
+                print("FAIL: SMC timed out")
+                return 0
+            
+            if this_post == 0xF2:
+                print("FAIL: hash check mismatch")
+                print(f"-> DA -> F2 = {t-ticks_DA} usec")
+                return 1
+    finally:
+        kill_fake_clock_gen()
+        i2c.writeto_mem(0x69, 0, bytes([0x01, 0xFF]))
 
 def do_reset_glitch_loop():
     freq(200000000)
     
-    reset_trial = 122864
-    
+    mem32[0x4001c004 + (4*4)] = 0b01110011
+    mem32[0x4001c004 + (5*4)] = 0b01110011
+
+    reset_trial = 184000
+
     while True:
         print(f"start trial of: {reset_trial}")
 
@@ -229,5 +240,5 @@ def do_reset_glitch_loop():
         if result == 2:
             init_sm(0)
             return
-        # elif result != 0:
-        # reset_trial += 1
+        elif result != 0:
+            reset_trial -= 1
