@@ -22,12 +22,13 @@ Common phat modding methods:
   clock will be required, most likely using a high speed 74-series counter IC.
 
 Novel concepts for glitching:
-- RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC. Not done yet.
+- RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC. Not working; CPU crashes at 0x22 every time.
 - EXT+3: Similar concept for Zephyr boards combining EXT_CLK and I2C slowdown. Might be unstable.
 
 Other stuff I could conceptualize:
 - Method to use I2C to disable the 100 MHz CPU clock and inject a slower clock signal in its place.
-  Should be far more effective than EXT_CLK. Probably hasn't been done because of stability issues.
+  Should be far more effective than EXT_CLK. Likely impossible without a properly temperature compensated
+  external clock generator.
 - Reset glitch attack against the bootrom. All RGH attacks target CB, but none so far have
   targeted the signature check in the bootrom. Given the 360 has been out for 20 years I'm not
   getting my hopes up for this one.

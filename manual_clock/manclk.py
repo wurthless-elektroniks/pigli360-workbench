@@ -39,7 +39,8 @@ so we have to turn the clock off, substitute our own, run the glitch,
 then switch the CPU's real clock back on.
 
 Status: Not working. Might never work. The clock we feed to the CPU isn't as clean as
-it would expect. 
+it would expect. A stable clock generator would have to be temperature compensated.
+What successes we get from this code will essentially be random.
 
 Bugs:
 - As with RGH1.2.3, I2C can misbehave, leading to ENODEV errors and RRODs.
@@ -81,7 +82,7 @@ CPU_CLK_DN_R = Pin(5, Pin.IN) # R3C12
 def clock_gen():
     wrap_target()
     set(pins, 1) # positive high, negative low
-    set(pins, 2) # negative high, positive low
+    set(pins, 0) # negative high, positive low
     wrap()
 
 @rp2.asm_pio(set_init=[PIO.IN_LOW, PIO.IN_LOW])
@@ -97,15 +98,10 @@ def manclk_reset_only():
     wait(1, pin, 1)                       # 2
     label("3")
     jmp(y_dec, "3")                       # 3
-    set(pindirs, 3)                  [3]  # 4
-    nop() [31]
-    nop() [31]
-    nop() [31]
-    nop() [31]
-    nop() [31]
+    set(pindirs, 3)                  [15] # 4
     set(pins, 3)                          # 5
     set(pindirs, 1)                       # 6
-    push(noblock)                         # 7
+    # push(noblock)                         # 7
     wrap_target()
     nop()                                 # 8
     wrap()
@@ -113,8 +109,10 @@ def manclk_reset_only():
 # ---------------------------
 
 # the actual clock rate/slowdown on the CPU isn't quite clear to me.
-MANCLK_CLOCK_DIV = 32
-FAKE_CLOCK_RATE = int((200000000 / 2) / MANCLK_CLOCK_DIV)
+# note that the higher the clock divider, the more variance there will be
+# in potential output timings.
+MANCLK_CLOCK_DIV = 64
+FAKE_CLOCK_RATE = int(200000000 / MANCLK_CLOCK_DIV)
 
 def setup_fake_clock_gen():
 
@@ -191,7 +189,7 @@ def do_reset_glitch() -> int:
                 if this_post == 0xD9:
                     # the closer to 0xDA you get, the less time the PLL will get to stabilize.
                     # use 0.4096 as a safe value.
-                    sleep(0.39)
+                    sleep(0.4096)
 
                     # kill real clock generator
                     i2c.writeto_mem(0x69, 0, bytes([0x01, 0xFD]))
@@ -200,7 +198,7 @@ def do_reset_glitch() -> int:
                     setup_fake_clock_gen()
 
                     # also start glitcher statemachine
-                    # pio_sm.active(1)
+                    pio_sm.active(1)
 
                 if this_post == 0xDB:
                     print("got candidate!!!")
@@ -208,7 +206,8 @@ def do_reset_glitch() -> int:
             if this_post == 0xDA:
                 ticks_DA = t
                 while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == v:
-                    pass
+                    t = ticks_us()
+                this_post = (v >> 15) & 0xFF
 
             if this_post == 0x00:
                 print("FAIL: SMC timed out")
@@ -228,7 +227,7 @@ def do_reset_glitch_loop():
     mem32[0x4001c004 + (4*4)] = 0b01110011
     mem32[0x4001c004 + (5*4)] = 0b01110011
 
-    reset_trial = 184000
+    reset_trial = 800000
 
     while True:
         print(f"start trial of: {reset_trial}")
@@ -241,4 +240,4 @@ def do_reset_glitch_loop():
             init_sm(0)
             return
         elif result != 0:
-            reset_trial -= 1
+            reset_trial += 1
