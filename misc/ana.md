@@ -4,8 +4,11 @@ Maybe ideas for Xenon stuff?
 
 ANA is accessible over I2C at address 0x70, same as HANA.
 
-The ANA has clock generators that weren't used in production as they were too unstable. Maybe they could be
-reenabled and abused.
+The ANA has clock generators that weren't used in production as they were too unstable.
+~~Maybe they could be reenabled and abused.~~ It looks like they may be disabled at the
+die level - can't confirm this, but only a subset of registers compared to HANA can be
+accessed. Unless there's a magic "enable the clock generators" register somewhere,
+I doubt this approach will work.
 
 | Register | Length | Contents    |
 | -------- | ------ | ----------- |
