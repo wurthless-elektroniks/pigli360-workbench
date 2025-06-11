@@ -1,0 +1,39 @@
+;
+; Common resetter. Python/ARM-side code is responsible for managing PLL timings.
+; PIO should start executing at POST 0xD6.
+;
+; Input pin is POST bit 0
+; Set pin is /CPU_RESET
+;
+
+.program resetter
+    pull noblock
+    mov y,osr
+
+    wait 1 pin 0                ; wait for POST 0xD7
+    wait 0 pin 0                ; wait for POST 0xD8
+    wait 1 pin 0                ; wait for POST 0xD9
+    wait 0 pin 0                ; wait for POST 0xDA
+reset_delay:
+    jmp y--, reset_delay        ; then delay until it's time to send the /RESET pulse
+    
+    ; strobe /RESET
+    set pindirs,1 [3]  ; pulse /RESET low for 4 cycles
+    
+    ; pull /RESET high instead of letting it drift upward.
+    ; DANGER - this is interfacing 3v3 to a 1v1 line.
+    ; the longer this is on, the more damage you'll cause to your CPU.
+    ; and yes, it really seems this is what the glitch chips actually do.
+    ;
+    ; to limit damage, you should connect a double-diode between /RESET
+    ; and ground to clamp the voltage spike to 1.4v. be sure to measure
+    ; the diodes before you install them - they should have a forward
+    ; voltage around 0.7 volts.
+    set pins,1
+    
+    set pindirs,1      ; set /RESET back to input
+
+    ; spin forever
+    .wrap_target
+    nop
+    .wrap
