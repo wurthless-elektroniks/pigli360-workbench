@@ -5,6 +5,10 @@
 ; Input pin is POST bit 0
 ; Set pin is /CPU_RESET
 ;
+; Note: This is just a reference implementation. pigli360 dynamically assembles
+; the resetter PIO program.
+;
+
 
 .program resetter
     pull noblock
