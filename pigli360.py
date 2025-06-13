@@ -121,8 +121,74 @@ def _build_pio_posttracker_program(num_toggles_before_irq: int):
     - num_toggles_before_irq: Number of times the POST signal should toggle
                               before raising IRQ.
     '''
+    # glitch2 post sequence
+    # POST | bit 0 | bit 1
+    # -----|-------|--------
+    # 0x00 |   0   |   0
+    # 0x10 |   0   |   0
+    # 0x11 |   1   |   0
+    # 0x12 |   0   |   1
+    # 0x13 |   1   |   1
+    # 0x14 |   0   |   0
+    # 0x15 |   1   |   0
+    # 0x16 |   0   |   1
+    # 0x17 |   1   |   1
+    # 0x18 |   0   |   0
+    # 0x19 |   1   |   0
+    # 0x1A |   0   |   1
+    # 0x1B |   1   |   1
+    # 0x1C |   0   |   0
+    # 0x1D |   1   |   0
+    # 0x1E |   0   |   1
+    # 0xD0 |   0   |   0
+    # 0xD1 |   1   |   0
+    # 0xD2 |   0   |   1
+    # 0xD3 |   1   |   1
+    # 0xD4 |   0   |   0
+    # 0xD5 |   1   |   0
+    # 0xD6 |   0   |   1
+    #
+    # POST bit 0 - 20 transitions, ending on 0
+    # POST bit 1 - 11 transitions, ending on 1
 
-    pass
+    @rp2.asm_pio()
+    def posttrack():
+        set(x, num_toggles_before_irq >> 1)
+        label("start_over")
+        move(y, x)
+        label("wait_reset_fall")
+        jmp(pin, "wait_reset_fall")
+        label("wait_reset_rise")
+        jmp(pin, "reset_rose")
+        jmp("wait_reset_rise")
+        label("reset_rose")
+        
+        # track 0 -> 1 -> 0 transitions.
+        # if /CPU_RESET falls, start over.
+        label("wait_post_rise")
+        wait(1, pin)
+        jmp(pin, "wait_post_fall")
+        jmp("start_over")
+        label("wait_post_fall")
+        wait(0, pin)
+        jmp(pin, "decrement_and_repeat")
+        label("decrement_and_repeat")
+        jmp(x_dec, "wait_post_rise")
+
+        if (num_toggles_before_irq & 1) != 0:
+            label("wait_final_post_rise")
+            wait(1, pin)
+            jmp(pin, "done")
+            jmp("start_over")
+            label("done")
+
+        # set IRQ to indicate to other statemachine it's time to start running
+        irq(7)
+
+
+    return posttrack
+
+
 
 def _build_pio_resetter_code(reset_pulse_width: int,
                              push_after_finish: bool = False,
@@ -144,7 +210,7 @@ def _build_pio_resetter_code(reset_pulse_width: int,
     '''
     if (0 <= reset_pulse_width <= 31):
         raise RuntimeError("reset_pulse_width must be within 0-31. recommended is 1-3")
-    
+
     prg = []
     if control_pll:
         prg += [
