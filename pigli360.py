@@ -188,8 +188,6 @@ def _build_pio_posttracker_program(num_toggles_before_irq: int):
 
     return posttrack
 
-
-
 def _build_pio_resetter_code(reset_pulse_width: int,
                              push_after_finish: bool = False,
                              control_pll:    bool = False,
@@ -208,143 +206,56 @@ def _build_pio_resetter_code(reset_pulse_width: int,
     - use_post_bit_1: If True, the PIO program will be built to track POST bit 1 rises/falls.
                       Default is False (track POST bit 0 rises/falls instead).
     '''
+
     if (0 <= reset_pulse_width <= 31):
         raise RuntimeError("reset_pulse_width must be within 0-31. recommended is 1-3")
 
-    prg = []
-    if control_pll:
-        prg += [
-            # pull noblock
-            # mov x, osr
-        ]
-
-    prg += [
-        0x8080, # pull   noblock
-        0xa047, # mov    y, osr
-    ]
-
-    if use_post_bit_1:
-        prg.append(0x2020) # wait   0 pin, 0   - 0xD8
-
+    @rp2.asm_pio()
+    def resetter():
+        # x = pll delay, if necessary
+        # y = reset delay
         if control_pll:
-            # jmp x--, $
-            # set pins, 1
-            pass
+            pull(noblock)
+            mov(x, osr)
 
-        prg.append(0x20a0) # wait   1 pin, 0   - 0xDA
-    else:
-        # use POST bit 0
-        prg += [
-            0x20a0, # wait   1 pin, 0   - 0xD7
-            0x2020, # wait   0 pin, 0   - 0xD8
-            0x20a0, # wait   1 pin, 0   - 0xD9
-        ]
+        pull(noblock)
+        mov(y, osr)
 
-        if control_pll:
-            # jmp x--, $
-            # set pins, 1
-            pass
+        # wait for POST 0xDA
+        if use_post_bit_1:
+            wait(0, pin, 0) # 0xD8/D9
+            if control_pll:
+                label("pll_delay")
+                jmp(x_dec, "pll_delay")
+                set(pins, 1)
+            wait(1, pin, 1) # 0xDA
+        else:
+            wait(1, pin, 0) # 0xD7
+            wait(0, pin, 0) # 0xD8
+            wait(1, pin, 0) # 0xD9
+            if control_pll:
+                label("pll_delay")
+                jmp(x_dec, "pll_delay")
+                set(pins, 1)
+            wait(0, pin, 0) # 0xDA
 
-        prg.append(0x2020) # wait   0 pin, 0   - 0xDA
-    
-    # kill time until it's time to send the reset pulse
-    prg.append(0x0080 | len(prg)) # jmp y--, $ - immediate jump to itself
+        # reset delay / glitch pulse
+        label("reset_delay")
+        jmp(y_dec, "reset_delay")
+        set(pindirs, 3) [reset_pulse_width] # /CPU_RESET already should be set to 0.
 
-    # actually send the reset pulse
-    if control_pll:
-        prg.append(0xe083 | reset_pulse_width << 8) # set pindirs, 3 [reset_pulse_width]
-        prg.append(0xe003) # set    pins, 3
-        prg.append(0xe081) # set    pindirs, 1
-    else:
-        prg.append(0xe081 | reset_pulse_width << 8) # set pindirs, 1 [reset_pulse_width]
-        prg.append(0xe001) # set    pins, 1
-        prg.append(0xe080) # set    pindirs, 0
+        set(pins, 3)                        # nasty voltage pulse - makes /CPU_RESET rise immediately
+                                            # instead of letting it float upward.
+                                            # again, this is applying 3v3 to a 1v1 pin!!
 
-    if push_after_finish:
-        prg.append(0x8000) # push noblock
+        set(pindirs, 0)                     # de-assert all outputs
+        if push_after_finish:
+            push(noblock)
+        wrap_target()
+        nop()                                 # 10
+        wrap()
 
-    prg.append(0xa042) # nop - this is also the wrap instruction.
-    return prg
-
-def _build_execctrl(side_en: bool = False,
-                    side_pindir: bool = False,
-                    jmp_pin: int = 0,
-                    out_en_sel: int = 0,
-                    inline_out_en: bool = False,
-                    out_sticky: bool = False,
-                    wrap_top: int = 0x1F,
-                    wrap_bottom: int = 0x00,
-                    status_sel: int = 0,
-                    status_n: int = 0
-                    ) -> int:
-    '''
-    Build execctrl control word.
-    
-    Descriptions of each parameter copied from RP2040 datasheet.
-    
-    Parameters:
-    - side_en: If True, the MSB of the Delay/Side-set instruction field is used as side- \
-        set enable, rather than a side-set data bit. This allows instructions to perform \
-        side-set optionally, rather than on every instruction, but the maximum possible \
-        side-set width is reduced from 5 to 4. Note that the value of \
-        PINCTRL_SIDESET_COUNT is inclusive of this enable bit.
-    - side_pindir: If True, side-set data is asserted to pin directions, instead of pin values.
-    - jmp_pin: The GPIO number to use as condition for JMP PIN. Unaffected by input mapping.
-    - out_en_sel: Which data bit to use for inline OUT enable.
-    - inline_out_en: If True, use a bit of OUT data as an auxiliary write enable. \
-        When used in conjunction with OUT_STICKY, writes with an enable of 0 will \
-        deassert the latest pin write. This can create useful masking/override \
-        behaviour due to the priority ordering of state machine pin writes (SM0 < SM1 < ...).
-    - out_sticky: Continuously assert the most recent OUT/SET to the pins.
-    - wrap_top: After reaching this address, execution is wrapped to wrap_bottom. \
-        If the instruction is a jump, and the jump condition is true, the jump takes \
-        priority.
-    - wrap_bottom: After reaching wrap_top, execution is wrapped to this address.
-    - status_sel: Comparison used for the MOV x, STATUS instruction. \
-        - 0 = TXLEVEL: All-ones if TX FIFO level < N, otherwise all-zeroes.
-        - 1 = RXLEVEL: All-ones if RX FIFO level < N, otherwise all-zeroes.
-    - status_n: Comparison level for the MOV x, STATUS instruction.
-    '''
-
-    if (0 <= jmp_pin <= 31) is False:
-        raise RuntimeError("jmp_pin must be in range 0-31")
-
-
-    bits = 0x00000000
-
-    if side_en:
-        bits |= (1 << 30)
-
-    if side_pindir:
-        bits |= (1 << 29)
-
-    return bits
-
-def _build_pio_program(program_words: list,
-                       wrap_top: int,
-                       wrap_bottom: int,
-                       out_pins: list | None,
-                       set_pins: list | None,
-                       sideset_pins: list | None):
-    # @rp2.asm_pio builds a tuple as follows
-    # [0] ... PROG_DATA .............. array('H', [... program words ...])
-    # [1] ... PROG_OFFSET_PIO0 ....... -1 (will change when program is loaded to PIO0)
-    # [2] ... PROG_OFFSET_PIO1 ....... -1 (will change when program is loaded to PIO1)
-    # [3] ... PROG_OFFSET_EXECCTRL ... build using _build_execctrl().
-    # [4] ... PROG_SHIFTCTRL ......... 0??
-    # [5] ... PROG_OUT_PINS  ......... list | None
-    # [6] ... PROG_SET_PINS  ......... list | None
-    # [7] ... PROG_SIDESET_PINS  ..... list | None
-    #
-    # DANGER: this is micropython version dependent.
-    if (0 <= wrap_top <= 31) is False:
-        raise RuntimeError("wrap_top must be between 0 and 31")
-    if (0 <= wrap_bottom <= 31) is False:
-        raise RuntimeError("wrap_bottom must be between 0 and 31")
-
-
-    pass
-
+    return resetter
 
 # ---------------------------------------------------------------------------------------
 
@@ -393,18 +304,21 @@ def _monitor_post_postglitch(enable_timeouts=False) -> GlitchResult:
             wait_result = _wait_post_transition(io, timeout_usec=POST_TIMEOUT_TABLE[io])
         else:
             wait_result = _wait_post_transition(io)
+
         if wait_result in [ -1, -2 ]:
             print("FAIL: timeout on POST ")
             _signal_fail()
+            return GlitchResult.GLITCH_POSTGLITCH_TIMEOUT
 
         io = wait_result[0]
         if io in [ POST_10, POST_11 ]:
             print("SUCCESS: XeLL should be running")
-            # return immediately
+            return GlitchResult.GLITCH_OK
         else:
             wait_result = _wait_post_transition(io)
             if wait_result == -1:
                 print("FAIL: SMC unexpectedly reset CPU")
+                return GlitchResult.GLITCH_SMC_TIMEOUT
             io = wait_result[0]
 
 def _do_glitch2_workflow(pio_sm,
