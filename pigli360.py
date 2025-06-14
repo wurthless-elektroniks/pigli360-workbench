@@ -113,7 +113,7 @@ class GlitchResult(Enum):
 
 # ---------------------------------------------------------------------------------------
 
-def _build_pio_posttracker_program(num_toggles_before_irq: int):
+def _build_pio_glitch2_posttracker_program(num_toggles_before_irq: int):
     '''
     Builds POST tracker PIO program, needed for single-wire mode.
 
@@ -188,12 +188,12 @@ def _build_pio_posttracker_program(num_toggles_before_irq: int):
 
     return posttrack
 
-def _build_pio_resetter_code(reset_pulse_width: int,
+def _build_pio_glitch2_resetter_code(reset_pulse_width: int,
                              push_after_finish: bool = False,
                              control_pll:    bool = False,
                              use_post_bit_1: bool = False) -> list:
     '''
-    Builds common PIO resetter code.
+    Builds common PIO resetter code for Glitch2-based attacks.
 
     Parameters:
     - reset_pulse_width: Number of additional cycles to assert /CPU_RESET for. \
