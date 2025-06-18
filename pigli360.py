@@ -2,7 +2,8 @@
 pigli360.py
 Common glitching framework because the scattered implementations were getting unmanagable
 '''
-
+ 
+import rp2
 from machine import Pin,mem32,SoftI2C
 from time import sleep, sleep_ms, ticks_us
 from enum import Enum
@@ -82,7 +83,9 @@ CB_B hash check failed, CPU halted.
 '''
 
 # actual logical bits are reversed
-# all must be connected to the POST pins via diodes as in RGH3/
+# all must be connected to the POST pins via diodes as in RGH3
+# use the fastest diodes you can for this for most reliable timings
+#
 # DBG_CPU_POST_OUT7 = post bit 0 for RGH 1.2
 # DBG_CPU_POST_OUT6 = post bit 1 for RGH 1, 3
 DBG_CPU_POST_OUT0 = Pin(POST_PIN_BASE_ID+7, Pin.IN, Pin.PULL_UP) # FT6U8
@@ -91,8 +94,17 @@ DBG_CPU_POST_OUT2 = Pin(POST_PIN_BASE_ID+5, Pin.IN, Pin.PULL_UP) # FT6U3
 DBG_CPU_POST_OUT3 = Pin(POST_PIN_BASE_ID+4, Pin.IN, Pin.PULL_UP) # FT6U4
 DBG_CPU_POST_OUT4 = Pin(POST_PIN_BASE_ID+3, Pin.IN, Pin.PULL_UP) # FT6U5
 DBG_CPU_POST_OUT5 = Pin(POST_PIN_BASE_ID+2, Pin.IN, Pin.PULL_UP) # FT6U6
-DBG_CPU_POST_OUT6 = Pin(POST_PIN_BASE_ID+1, Pin.IN, Pin.PULL_UP) # FT6U7
-DBG_CPU_POST_OUT7 = Pin(POST_PIN_BASE_ID, Pin.IN, Pin.PULL_UP) # FT6U1
+
+DBG_CPU_POST_OUT6 = Pin(POST_PIN_BASE_ID+1, Pin.IN, Pin.PULL_UP)
+'''
+FT6U7, POST bit 1
+'''
+
+DBG_CPU_POST_OUT7 = Pin(POST_PIN_BASE_ID+0, Pin.IN, Pin.PULL_UP)
+'''
+FT6U1, POST bit 0
+'''
+
 
 # outputs
 CPU_RESET           = Pin(CPU_CTRL_BASE_ID + 1, Pin.IN)   # will switch to output later
@@ -120,6 +132,7 @@ def _build_pio_glitch2_posttracker_program(num_toggles_before_irq: int):
     Parameters:
     - num_toggles_before_irq: Number of times the POST signal should toggle
                               before raising IRQ.
+    - irq_number: IRQ ID to raise.
     '''
     # glitch2 post sequence
     # POST | bit 0 | bit 1
@@ -154,6 +167,7 @@ def _build_pio_glitch2_posttracker_program(num_toggles_before_irq: int):
     @rp2.asm_pio()
     def posttrack():
         set(x, num_toggles_before_irq >> 1)
+        wrap_target()
         label("start_over")
         move(y, x)
         label("wait_reset_fall")
@@ -183,15 +197,17 @@ def _build_pio_glitch2_posttracker_program(num_toggles_before_irq: int):
             label("done")
 
         # set IRQ to indicate to other statemachine it's time to start running
-        irq(7)
-
+        irq(irq_number)
+        wrap()
 
     return posttrack
 
-def _build_pio_glitch2_resetter_code(reset_pulse_width: int,
+def _build_pio_glitch2_resetter_code( \
+                             reset_pulse_width: int,
                              push_after_finish: bool = False,
                              control_pll:    bool = False,
-                             use_post_bit_1: bool = False) -> list:
+                             use_post_bit_1: bool = False,
+                             wait_on_irq: int = -1) -> list:
     '''
     Builds common PIO resetter code for Glitch2-based attacks.
 
@@ -205,6 +221,9 @@ def _build_pio_glitch2_resetter_code(reset_pulse_width: int,
     - control_pll: If True, the PIO program will be built to control CPU_PLL_BYPASS/CPU_EXT_CLK_EN.
     - use_post_bit_1: If True, the PIO program will be built to track POST bit 1 rises/falls.
                       Default is False (track POST bit 0 rises/falls instead).
+    - wait_on_irq: Wait for the given IRQ to be set before code runs, then clears it.
+      Default is -1 (don't wait).
+      Note that the PLL and reset delays will not be repopulated; your script needs to do that.
     '''
 
     if (0 <= reset_pulse_width <= 31):
@@ -212,6 +231,10 @@ def _build_pio_glitch2_resetter_code(reset_pulse_width: int,
 
     @rp2.asm_pio()
     def resetter():
+        if wait_on_irq != -1:
+            wait(wait_on_irq, irq, 1)
+            irq(clear, wait_on_irq)
+
         # x = pll delay, if necessary
         # y = reset delay
         if control_pll:
@@ -251,8 +274,10 @@ def _build_pio_glitch2_resetter_code(reset_pulse_width: int,
         set(pindirs, 0)                     # de-assert all outputs
         if push_after_finish:
             push(noblock)
+        
+        # spin until PIO restarted
         wrap_target()
-        nop()                                 # 10
+        nop()
         wrap()
 
     return resetter
@@ -293,7 +318,7 @@ def _signal_fail():
     sleep_ms(1)
     FAIL_SIGNAL.value(0)
 
-def _monitor_post_postglitch(enable_timeouts=False) -> GlitchResult:
+def _monitor_post_postglitch_glitch2(enable_timeouts=False) -> GlitchResult:
     '''
     Tracks post-glitch boot progress.
     '''
@@ -306,7 +331,7 @@ def _monitor_post_postglitch(enable_timeouts=False) -> GlitchResult:
             wait_result = _wait_post_transition(io)
 
         if wait_result in [ -1, -2 ]:
-            print("FAIL: timeout on POST ")
+            print(f"FAIL: timeout on POST {_unpack_post(io)}")
             _signal_fail()
             return GlitchResult.GLITCH_POSTGLITCH_TIMEOUT
 
@@ -322,20 +347,20 @@ def _monitor_post_postglitch(enable_timeouts=False) -> GlitchResult:
             io = wait_result[0]
 
 def _do_glitch2_workflow(pio_sm,
-                         fcn_apply_slowdown,
-                         fcn_cleanup,
+                         fcn_apply_slowdown = None,
+                         fcn_cleanup = None,
                          wait_for_pio_resetter_done=False) -> GlitchResult:
     '''
-    Common workflow for Glitch2-based attacks (RGH1.2, EXT_CLK).
+    Common workflow for 8-wire POST Glitch2-based attacks (RGH1.2, EXT_CLK).
     PIO program will always start execution at POST 0xD6.
 
     Inputs:
     - pio_sm: The PIO statemachine, already initialized and ready to execute.
-    - fcn_apply_slowdown: Callback executed at 0xD9. Typically where slowdown should be applied.
-    - fcn_cleanup: Callback to execute once the glitch workflow ends.
+    - fcn_apply_slowdown: Optional callback executed at 0xD9. Typically where slowdown should be applied.
+    - fcn_cleanup: Optional callback to execute once the glitch workflow ends.
     - wait_for_pio_resetter_done: Optional. If True, wait for PIO resetter to finish (your PIO   \
       program should push something to the ISR to indicate it's done). \
-      Default is False (don't wait).
+      Default is False (waits for 0xDA POST code to change to something else).
 
     Return values:
     - GLITCH_OK: Success
@@ -360,21 +385,25 @@ def _do_glitch2_workflow(pio_sm,
             print("FAIL: SMC timeout")
             _signal_fail()
             return GlitchResult.GLITCH_SMC_TIMEOUT
+        
+        # CAUTION! these readings will be skewed by callbacks and behavior below
+        print(f"{_unpack_post(io):02x} {post_tuple[1]} usec")
 
         io = post_tuple[0] # raw value off IO pins, AND masked of course
 
-        if io == POST_D9:
+        if io == POST_D9 and fcn_apply_slowdown is not None:
             fcn_apply_slowdown()
 
         elif io == POST_DA:
             if wait_for_pio_resetter_done is True:
                 pio_sm.get()
-            
+            else:
+                while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == POST_DA:
+                    pass
             pio_sm.active(0)
-            fcn_cleanup()
+            if fcn_cleanup is not None:
+                fcn_cleanup()
             break
-
-        print(f"{_unpack_post(io):02x} {post_tuple[1]} usec")
 
     post_after = mem32[RP2040_GPIO_IN] & POST_BITS_MASK
 
@@ -386,9 +415,36 @@ def _do_glitch2_workflow(pio_sm,
     if post_after not in [ POST_DB, POST_20, POST_21, POST_22 ]:
         print("BUG CHECK: fcn_cleanup() took too long to execute")
     
-    return _monitor_post_postglitch()
+    return _monitor_post_postglitch_glitch2()
+
 
 # ---------------------------------------------------------------------------------------
 
 def rgh12():
-    pass
+    '''
+    RGH 1.2, 8-wire POST
+    '''
+
+    pll_wait_ms = 0.4
+    reset_delay = 349818 # 349821 is the recommended RGH 1.2 delay value
+
+    def _apply_slowdown():
+        sleep(pll_wait_ms)
+        CPU_PLL_BYPASS.value(1)
+        
+    def _cleanup():
+        CPU_PLL_BYPASS.value(0)
+
+    while True:
+        prg = _build_pio_glitch2_resetter_code(4)
+        sm = rp2.StateMachine(0,
+                              prg,
+                              freq = 48000000,
+                              in_base=DBG_CPU_POST_OUT7,
+                              set_base=CPU_PLL_BYPASS
+                              )
+        sm.active(0)
+        sm.restart()
+        sm.put(reset_delay)
+
+        _do_glitch2_workflow(sm, _apply_slowdown, _cleanup)
