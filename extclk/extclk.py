@@ -57,19 +57,17 @@ def extclk():
     wait(1, pin, 1)                       # 8
     label("9")
     jmp(y_dec, "9")                       # 9
-    set(pindirs, 3)                   [2] # 10
-    set(pins, 3)                          # 11
+    set(pindirs, 3)                       # 10d
+    set(pins, 2)                      [1] # 11
     set(pindirs, 1)                       # 12
-    nop() [31]
-    nop() [31]
-    nop() [31]
-    nop() [31]
     set(pins, 0)                          # 16
     wrap_target()
     nop()                                 # 17
     wrap()
 
 pio_sm = None
+
+SYSTEM_CLOCK = 192000000
 
 def monitor_post():
     last_post = 0
@@ -81,7 +79,7 @@ def monitor_post():
 
 def init_sm(reset_assert_delay):
     global pio_sm
-    pio_sm = rp2.StateMachine(0, extclk, freq = 200000000, in_base=DBG_CPU_POST_OUT7, set_base=CPU_PLL_BYPASS)
+    pio_sm = rp2.StateMachine(0, extclk, freq = 96000000, in_base=DBG_CPU_POST_OUT7, set_base=CPU_PLL_BYPASS)
 
     pio_sm.active(0)
     pio_sm.restart()
@@ -93,9 +91,10 @@ def init_sm(reset_assert_delay):
         print("full steam ahead!!")
     else:
         raise RuntimeError("cannot set I/O drive...")
+    mem32[0x4001c004 + (13*4)] = 0b01110011
 
     # same delay as RGH1.2
-    pll_delay = int(0.4096 * 200000000)
+    pll_delay = int(0.4096 * 96000000)
 
     reset_delay = reset_assert_delay
 
@@ -136,7 +135,7 @@ def do_reset_glitch() -> int:
             print("got candidate!!!")
             # return 1
 
-        if this_post == 0x00:
+        if this_post == 0x10:
             print("FAIL: SMC timed out")
             return 0
 
@@ -150,7 +149,7 @@ def do_reset_glitch() -> int:
 
 
 def do_reset_glitch_loop():
-    freq(200000000)
+    freq(192000000)
 
     # glitch values (that start CB_B) typically happen around 614.3125 microseconds
     # 29485-29498 @ 48 MHz
@@ -158,7 +157,11 @@ def do_reset_glitch_loop():
     # 117948-117999 @ 192 MHz (117950 consistent)
     # 122864 @ 200 MHz
     
-    reset_trial = 122864
+    # with 1N1412 diodes
+    # @ 96 MHz:
+    # - 58893, 58904, 58907, 58914, 58915, 58922, 58929, 58942, 58946, 58949
+    # around 117900 @ 192 MHz
+    reset_trial = 58949
     
     while True:
         print(f"start trial of: {reset_trial}")
@@ -171,4 +174,4 @@ def do_reset_glitch_loop():
             init_sm(0)
             return
         # elif result != 0:
-        # reset_trial += 1
+        reset_trial -= 1
