@@ -108,9 +108,13 @@ def init_sm(reset_assert_delay):
     # the "pll delay" is the amount of time we wait between POST 0xD9
     # and when CPU_PLL_BYPASS is asserted.
     #
+    # for glitch2 images (standard RGH1.2):
     # this value is 9600 * 1024 * 2. the matrix/coolrunner source doesn't count
     # these manually, instead preferring to use a divider, most likely to save
     # cell space on the FPGA.
+    #
+    # for glitch3 images (this approach is nicknamed "RGH1.3"):
+    # don't go past 408000. even at this value, you'll get failed boots.
     pll_delay = 19660800
 
     # the "pulse delay" is how long to wait before asserting /RESET after POST 0xDA,
