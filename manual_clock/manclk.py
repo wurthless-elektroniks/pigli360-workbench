@@ -82,7 +82,7 @@ CPU_CLK_DN_R = Pin(5, Pin.IN) # R3C12
 def clock_gen():
     wrap_target()
     set(pins, 1) # positive high, negative low
-    set(pins, 0) # negative high, positive low
+    set(pins, 2) # negative high, positive low
     wrap()
 
 @rp2.asm_pio(set_init=[PIO.IN_LOW, PIO.IN_LOW])
@@ -91,16 +91,19 @@ def clock_gen_stubbed():
     nop()
     wrap()
 
-@rp2.asm_pio(set_init=[PIO.OUT_LOW, PIO.IN_LOW])
+@rp2.asm_pio(set_init=[PIO.IN_LOW])
 def manclk_reset_only():
     pull(noblock)                         # 0
     mov(y, osr)                           # 1
-    wait(1, pin, 1)                       # 2
+    wait(0, pin, 0)                       # 2
     label("3")
     jmp(y_dec, "3")                       # 3
-    set(pindirs, 3)                  [15] # 4
-    set(pins, 3)                          # 5
-    set(pindirs, 1)                       # 6
+    set(pindirs, 1)                  [31] # 4
+    nop() [31]
+    nop() [31]
+    nop() [31]
+    set(pins, 1)                          # 5
+    set(pindirs, 0)                       # 6
     # push(noblock)                         # 7
     wrap_target()
     nop()                                 # 8
@@ -111,12 +114,16 @@ def manclk_reset_only():
 # the actual clock rate/slowdown on the CPU isn't quite clear to me.
 # note that the higher the clock divider, the more variance there will be
 # in potential output timings.
-MANCLK_CLOCK_DIV = 64
-FAKE_CLOCK_RATE = int(200000000 / MANCLK_CLOCK_DIV)
+RP2040_CLOCK_RATE = 192000000
+
+MANCLK_CLOCK_DIV = 8
+FAKE_CLOCK_RATE = int(RP2040_CLOCK_RATE / MANCLK_CLOCK_DIV)
+
+# glitch clock = 48 MHz
+GLITCH_CLOCK_RATE = 48000000
+
 
 def setup_fake_clock_gen():
-
-
     sm = rp2.StateMachine(7, clock_gen, freq = FAKE_CLOCK_RATE, set_base=CPU_CLK_DP_R)
     sm.active(1)
 
@@ -139,7 +146,7 @@ i2c = SoftI2C(sda=Pin(8),scl=Pin(9),freq=100000)
 
 def init_sm(reset_assert_delay):
     global pio_sm 
-    pio_sm = rp2.StateMachine(0, manclk_reset_only, freq = 200000000, in_base=DBG_CPU_POST_OUT7, set_base=CPU_PLL_BYPASS)
+    pio_sm = rp2.StateMachine(0, manclk_reset_only, freq = GLITCH_CLOCK_RATE, in_base=DBG_CPU_POST_OUT7, set_base=CPU_RESET)
 
     pio_sm.active(0)
     pio_sm.restart()
@@ -174,7 +181,13 @@ def do_reset_glitch() -> int:
         pass
 
     last_post = 0
+    second_to_last_post = 0
+    transition_in_progress = False
     ticks_DA = 0
+
+    transition_start_tick = 0
+
+    glitcher_started = False
 
     try:
         while True:
@@ -182,32 +195,57 @@ def do_reset_glitch() -> int:
             t = ticks_us()
             this_post = (v >> 15) & 0xFF
 
-            if this_post != last_post:
-                print(f"{this_post:02x}")
+            # with 1N1418 diodes we have to wait a certain number of samples
+            # because it can take time for the actual POST code to propagate
+            if this_post != last_post or last_post != second_to_last_post:
+                if transition_in_progress is False:
+                    transition_start_tick = t
+                    transition_in_progress = True
+                x = last_post
+                second_to_last_post = x
                 last_post = this_post
-                
-                if this_post == 0xD9:
-                    # the closer to 0xDA you get, the less time the PLL will get to stabilize.
-                    # use 0.4096 as a safe value.
-                    sleep(0.4096)
+                continue
+            
+            if transition_in_progress is False:
+                continue
+    
+            transition_in_progress = False
+            t = transition_start_tick
 
-                    # kill real clock generator
-                    i2c.writeto_mem(0x69, 0, bytes([0x01, 0xFD]))
+            # POST transition has happened - let's do stuff
+            print(f"{this_post:02x}")
+            last_post = this_post
+            
+            if this_post == 0xD9 and glitcher_started is False:
+                # the closer to 0xDA you get, the less time the PLL will get to stabilize.
+                # use 0.4096 as a safe value.
+                sleep(0.38)
 
-                    # startup fake clock generator
-                    setup_fake_clock_gen()
+                pio_sm.active(1)
+                glitcher_started = True
 
-                    # also start glitcher statemachine
-                    pio_sm.active(1)
+                # kill real clock generator
+                i2c.writeto_mem(0x69, 0, bytes([0x01, 0xFD]))
 
-                if this_post == 0xDB:
-                    print("got candidate!!!")
+                # startup fake clock generator
+                setup_fake_clock_gen()
+
+                # assert CPU_EXT_CLK
+                CPU_PLL_BYPASS.value(1)
+
+            if this_post == 0xDB:
+                print("got candidate!!!")
+
+                kill_fake_clock_gen()
+                i2c.writeto_mem(0x69, 0, bytes([0x01, 0xFF]))
+                CPU_PLL_BYPASS.value(0)
 
             if this_post == 0xDA:
                 ticks_DA = t
-                while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == v:
-                    t = ticks_us()
-                this_post = (v >> 15) & 0xFF
+                # spin until transition
+                # while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == v:
+                    # t = ticks_us()
+                # this_post = (v >> 15) & 0xFF
 
             if this_post == 0x00:
                 print("FAIL: SMC timed out")
@@ -220,14 +258,15 @@ def do_reset_glitch() -> int:
     finally:
         kill_fake_clock_gen()
         i2c.writeto_mem(0x69, 0, bytes([0x01, 0xFF]))
+        CPU_PLL_BYPASS.value(0)
 
 def do_reset_glitch_loop():
-    freq(200000000)
+    freq(RP2040_CLOCK_RATE)
     
     mem32[0x4001c004 + (4*4)] = 0b01110011
     mem32[0x4001c004 + (5*4)] = 0b01110011
 
-    reset_trial = 800000
+    reset_trial = 1000 # 499700
 
     while True:
         print(f"start trial of: {reset_trial}")
@@ -240,4 +279,4 @@ def do_reset_glitch_loop():
             init_sm(0)
             return
         elif result != 0:
-            reset_trial += 1
+            reset_trial -= 1
