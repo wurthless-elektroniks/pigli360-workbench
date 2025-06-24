@@ -1,5 +1,6 @@
 '''
 RGH 1.2 in Micropython, mostly for the meme
+Also RGH1.3 if you set USING_GLITCH3_IMAGE to True
 Runs on Raspberry Pi Pico / RP2040
 Do not seriously use this unless you want to be laughed at
 
@@ -82,6 +83,9 @@ def rgh12():
 
 pio_sm = None
 
+# set to True for RGH1.3
+USING_GLITCH3_IMAGE = True
+
 def monitor_post():
     last_post = 0
     while True:
@@ -115,7 +119,7 @@ def init_sm(reset_assert_delay):
     #
     # for glitch3 images (this approach is nicknamed "RGH1.3"):
     # don't go past 408000. even at this value, you'll get failed boots.
-    pll_delay = 19660800
+    pll_delay = 19660800 if USING_GLITCH3_IMAGE is False else 408000
 
     # the "pulse delay" is how long to wait before asserting /RESET after POST 0xDA,
     # give or take a few cycles for the PIO to do stuff.
@@ -172,11 +176,13 @@ def do_reset_glitch() -> int:
         t = ticks_us()
 
         this_post = (v >> 15) & 0xFF
-        if this_post != last_post:
-            print(f"{this_post:02x}")
-            last_post = this_post
+        if this_post == last_post:
+            continue
         
-        if last_post == 0xDA:
+        print(f"{this_post:02x}")
+        last_post = this_post
+        
+        if this_post == 0xDA:
             ticks_DA = t
             while mem32[RP2040_GPIO_IN] == v:
                 pass
@@ -185,6 +191,20 @@ def do_reset_glitch() -> int:
         if this_post == 0xDB:
             print("got candidate!!!")
             # return 1
+
+        if USING_GLITCH3_IMAGE is True:
+            if this_post == 0x54:
+                # CB_X will always die at POST 0x54 upon a failed boot attempt.
+                # this makes it far easier to try again in case of a failed boot
+                start_tick = t
+                bits = v & POST_BITS_MASK
+                while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == bits:
+                    if (ticks_us() - start_tick) > 80000:
+                        print("FAIL: CB_X timeout")
+                        CPU_RESET.init(Pin.OUT)
+                        CPU_RESET.value(0)
+                        CPU_RESET.init(Pin.IN)
+                        break
 
         if this_post == 0x00:
             print("FAIL: SMC timed out")

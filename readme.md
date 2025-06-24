@@ -22,8 +22,9 @@ Common phat modding methods:
   clock will be required, most likely using a high speed 74-series counter IC.
 
 Novel concepts for glitching:
-- RGH1.3: RGH1.2 but with a RGH3-like image. Boots to XeLL in 5 seconds on Falcons. Questionable if it's any
-  real improvement over RGH1.2. Use XeLL images in `ecc/` to run this.
+- RGH1.3: RGH1.2 but with a RGH3-like image with the CB_X intermediate loader. Boots in around the same amount
+  of time as RGH1.2, but with the advantage that we can easily detect a failed boot and restart immediately.
+  Code is in `rgh12/` with the appropriate ECC images in `ecc/`.
 - RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC. Not working; CPU crashes at 0x22 every time.
 - EXT+3: Similar concept for Zephyr boards combining EXT_CLK and I2C slowdown. Might be unstable.
 
