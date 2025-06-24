@@ -44,25 +44,20 @@ CPU_RESET           = Pin(14, Pin.IN) # will switch to output later
 CPU_PLL_BYPASS      = Pin(13, Pin.OUT)
 
 
-@rp2.asm_pio(set_init=[PIO.OUT_LOW, PIO.IN_LOW])
-def rgh123():
-    pull(noblock)                         # 0
-    mov(x, osr)                           # 1
+@rp2.asm_pio(set_init=[PIO.IN_LOW])
+def resetter():
     pull(noblock)                         # 2
     mov(y, osr)                           # 3
-    wait(0, pin, 1)                       # 4
-    wait(1, pin, 0)                       # 5
-    label("6")
-    jmp(x_dec, "6")                       # 6
-    set(pins, 1)                          # 7
-    wait(1, pin, 1)                       # 8
+    wait(1, pin, 0)                       # 0xD7
+    wait(0, pin, 0)                       # 0xD8
+    wait(1, pin, 0)                       # 0xD9
+    wait(0, pin, 0)                       # 0xDA
     label("9")
     jmp(y_dec, "9")                       # 9
-    set(pindirs, 3)                  [3]  # 10
-    set(pins, 3)                          # 11
-    set(pindirs, 1)                       # 12
-    set(pins, 0)                          # 13
-    push(noblock)                         # 14
+    set(pindirs, 1)                   [3] # 10
+    set(pins, 1)                          # 11
+    set(pindirs, 0)                       # 12
+    push(noblock)
     wrap_target()
     nop()                                 # 15
     wrap()
@@ -77,9 +72,11 @@ def monitor_post():
             print(f"{this_post:08x}")
             last_post = this_post
 
+GLITCH_CLOCK_RATE = 48000000
+
 def init_sm(reset_assert_delay):
     global pio_sm
-    pio_sm = rp2.StateMachine(0, rgh123, freq = 48000000, in_base=DBG_CPU_POST_OUT7, set_base=CPU_PLL_BYPASS)
+    pio_sm = rp2.StateMachine(0, resetter, freq = GLITCH_CLOCK_RATE, in_base=DBG_CPU_POST_OUT7, set_base=CPU_RESET)
 
     pio_sm.active(0)
     pio_sm.restart()
@@ -94,11 +91,7 @@ def init_sm(reset_assert_delay):
     else:
         raise RuntimeError("cannot set I/O drive...")
 
-    # set slew rate to fast for PLL too
-    mem32[0x4001c004 + (13*4)] |= 1
 
-    # this is nowhere near precise and has to be tuned
-    pll_delay = 72686000
 
     # reset delay is around 26.924 ms in RGH3
     # that's about 1292352 cycles @ 48 MHz
@@ -106,18 +99,15 @@ def init_sm(reset_assert_delay):
     reset_delay = reset_assert_delay
 
     print("using these settings")
-    print(f"- pll delay {pll_delay}")
     print(f"- reset delay {reset_delay}")
 
     # populate FIFO - when PIO starts, it'll grab both these values immediately
-    pio_sm.put(pll_delay)
     pio_sm.put(reset_delay)
     print("buffered FIFO")
 
 
 def do_reset_glitch() -> int:
     i2c = SoftI2C(sda=Pin(8),scl=Pin(9),freq=100000)
-
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D5:
         pass 
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D6:
@@ -129,10 +119,7 @@ def do_reset_glitch() -> int:
     # default clock is [ 0x14, 0x44, 0xE8, 0x08 ]
     # 27 MHz mode is [ 0x14, 0x44, 0xE8, 0x28 ]
     # 15432 also found [ 0x14, 0x44, 0xE8, 0x88 ], maybe this is RGH3's 10 MHz mode?
-    # i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x28]))
-
     
-
     last_post = 0
 
     ticks_DA = 0
@@ -145,33 +132,29 @@ def do_reset_glitch() -> int:
             this_post = (v >> 15) & 0xFF
 
             if last_post != 0xD8 and this_post == 0xD8:
-                print("0xD8 arrived, send I2C")
+                CPU_PLL_BYPASS.value(1)
                 i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x28]))
+                CPU_PLL_BYPASS.value(0)
+
+            if last_post != 0xD9 and this_post == 0xD9:
+                sleep(0.035)
+                CPU_PLL_BYPASS.value(1)
 
             if last_post != 0xDA and this_post == 0xDA:
                 ticks_DA = t
 
                 # block until PIO is done
-                print("awaiting PIO finish...")
+                # print("awaiting PIO finish...")
                 pio_sm.get()
-                i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
-
-
                 print("PIO is done")
-
-
-                # debugging
-                '''
-                while mem32[RP2040_GPIO_IN] == v:
-                    pass
-                ticks_after_DA = ticks_us()
-                '''
             
             if this_post != last_post:
                 print(f"{this_post:02x}")
                 last_post = this_post
                 if this_post == 0xDB:
                     print("got candidate!!!")
+                    i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
+                    CPU_PLL_BYPASS.value(0)
 
             if this_post == 0x00:
                 print("FAIL: SMC timed out")
@@ -189,21 +172,20 @@ def do_reset_glitch() -> int:
                 return 1
     finally:
         i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
+        CPU_PLL_BYPASS.value(0)
 
 def do_reset_glitch_loop():
-    # fails around 1366368 / 28447 usec
-
     freq(192000000)
-    
-    # 0xDB candidates are: 1292328, 1292329, 1292330
+    # timings assume glitch3 image. see ecc/ directory for files
+    #
+    # 27 MHz timings:
+    # - with slow 1N400x diodes: 1292328 - 1292332 @ 48 MHz
+    # - with 1N4148 on POST bit 0: 1292327 - 1292330
+    #
     # this does get CB_B executing, but then the CPU crashes at 0x22.
     # occasionally weird POST codes show up (0x88, 0x44, etc.)
     #
-    # it's probably necessary to make a "glitch3" type image that's just a standard
-    # glitch2 image, but with the RGH3 stub in CB_B. tried making this myself but
-    # all it managed to do was brick the console...
-    reset_trial = 1292329 # 349821 # int(48 * 7296) # int(48 * 7400) # = 349821
-    
+    reset_trial = 1292328
     while True:
         print(f"start trial of: {reset_trial}")
 
@@ -214,5 +196,5 @@ def do_reset_glitch_loop():
         if result == 2:
             init_sm(0)
             return
-        # elif result != 0:
-        # reset_trial -= 1
+        elif result != 0:
+            reset_trial += 1
