@@ -7,7 +7,10 @@ Do not seriously use this unless you want to be laughed at
 CB POST codes will not be output on a stock console; you must write a XeLL .ecc
 to see them at all.
 
-Status: Works on Falcon, not tested with Jasper yet.
+Status:
+- Falcon: Works, usually instaboots, can take 4-6 tries
+- Jasper: Not tested yet
+- Xenon/Zephyr: Not supported for the following reasons
 
 About RGH1.2 on Waternoose boards:
 RGH1.2 has not been made to work with Waternoose-based CPUs because of instability.
@@ -34,7 +37,6 @@ RP2040_GPIO_IN = 0xD0000004
 POST_BITS_MASK = 0xFF << 15
 POST_D5        = 0xD5 << 15
 POST_D6        = 0xD6 << 15
-
 
 # actual logical bits are reversed
 # all are connected to the POST pins via diodes as in RGH3
@@ -83,8 +85,10 @@ def rgh12():
 
 pio_sm = None
 
-# set to True for RGH1.3
+# set to True for RGH1.3, False for RGH1.2
 USING_GLITCH3_IMAGE = True
+
+RAPID_RESET = False
 
 def monitor_post():
     last_post = 0
@@ -134,9 +138,6 @@ def init_sm(reset_assert_delay):
     # preferred value being 7287.9375 microseconds (349821 cycles).
     # if you find the 0xDA -> 0xF2 transition is nowhere near this value,
     # something is wrong.
-    #
-    # I was able to get odd results around 350208 cycles - these would generate POST 0xAF
-    # which is a CB error ("not enough memory").
     reset_delay = reset_assert_delay
 
     print("using these settings")
@@ -148,6 +149,10 @@ def init_sm(reset_assert_delay):
     pio_sm.put(reset_delay)
     print("buffered FIFO")
 
+def _force_reset():
+    CPU_RESET.init(Pin.OUT)
+    CPU_RESET.value(0)
+    CPU_RESET.init(Pin.IN)
 
 def do_reset_glitch() -> int:
     #
@@ -160,9 +165,9 @@ def do_reset_glitch() -> int:
     # kinda surprised commercial glitch chips never bothered to monitor the full POST bus...
     #
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D5:
-        pass 
+        pass
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D6:
-        pass 
+        pass
 
     pio_sm.active(1)
     print("0xD6 arrived - running PIO...")
@@ -201,9 +206,7 @@ def do_reset_glitch() -> int:
                 while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == bits:
                     if (ticks_us() - start_tick) > 80000:
                         print("FAIL: CB_X timeout")
-                        CPU_RESET.init(Pin.OUT)
-                        CPU_RESET.value(0)
-                        CPU_RESET.init(Pin.IN)
+                        _force_reset()
                         break
 
         if this_post == 0x00:
@@ -216,6 +219,9 @@ def do_reset_glitch() -> int:
             # this time is nowhere near accurate thanks to micropython's interpreted nature
             # but it is close to what it should be, and that's what counts
             print(f"-> DA -> F2 = {t-ticks_DA} usec")
+            if RAPID_RESET is True:
+                _force_reset()
+
             return 1
 
 def do_reset_glitch_loop():
@@ -223,7 +229,6 @@ def do_reset_glitch_loop():
     # to a multiple of 12 MHz, or this shit won't work
     freq(192000000)
 
-    
     # 349821 is timing file 21 and works... ehh... not great
     # 349819 boots in a couple of attempts
     # 349818 and a reset pulse width of 4 cycles instaboots my test falcon almost every time
@@ -236,8 +241,8 @@ def do_reset_glitch_loop():
 
         result = do_reset_glitch()
 
-        if result == 2:
-            init_sm(0)
-            return
+        # if result == 2:
+            # init_sm(0)
+            # return
         # elif result != 0:
             # reset_trial -= 1
