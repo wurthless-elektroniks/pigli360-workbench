@@ -61,6 +61,14 @@ RGH implementation in slow ass software. RGH3 demonstrated that software-based g
 viable, and it's quite possible that someone could launch a successful attack on a modern 48 MHz
 Cortex microcontroller, no FPGA required. So yeah, this is just a shitpost version of RGH.
 
+## Acknowledgements
+
+This is just the experiments of an idiot but it's standing on the work of giants:
+
+- GliGli and team for original RGH1 and RGH2 attacks
+- 15432 for RGH1.2 and RGH3
+- Octal450 for RGH1.2 V2 and EXT_CLK
+
 ## Further reading
 
 These are essential reading for anyone interested in 360 modding.

@@ -4,6 +4,8 @@ Also RGH1.3 if you set USING_GLITCH3_IMAGE to True
 Runs on Raspberry Pi Pico / RP2040
 Do not seriously use this unless you want to be laughed at
 
+Original RGH1.2 V2 code by Octal450, based on work by 15432
+
 CB POST codes will not be output on a stock console; you must write a XeLL .ecc
 to see them at all.
 
