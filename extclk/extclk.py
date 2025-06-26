@@ -10,7 +10,7 @@ CPU down 128x, CPU_EXT_CLK barely slows the CPU down (could be anywhere from
 
 As such the timing is super precise and may not even be possible on RP2040.
 
-Current status: Not working. CPU hangs at 0x22 every time.
+Current status: Works, but is very slow, even with forced resets to speedup the boot.
 '''
 
 from time import sleep, ticks_us
@@ -57,9 +57,16 @@ def extclk():
     wait(1, pin, 1)                       # 8
     label("9")
     jmp(y_dec, "9")                       # 9
-    set(pindirs, 3)                       # 10d
-    set(pins, 2)                      [1] # 11
+    set(pindirs, 3)                   [2] # 10
+    set(pins, 3)                      [3] # 11
     set(pindirs, 1)                       # 12
+
+    set(x,31) [31]
+    label("p")
+    nop() [31]
+    nop() [31]
+    jmp(x_dec,"p") [31]
+
     set(pins, 0)                          # 16
     wrap_target()
     nop()                                 # 17
@@ -68,6 +75,15 @@ def extclk():
 pio_sm = None
 
 SYSTEM_CLOCK = 192000000
+
+
+USING_GLITCH3_IMAGE = True
+
+
+def _force_reset():
+    CPU_RESET.init(Pin.OUT)
+    CPU_RESET.value(0)
+    CPU_RESET.init(Pin.IN)
 
 def monitor_post():
     last_post = 0
@@ -79,7 +95,7 @@ def monitor_post():
 
 def init_sm(reset_assert_delay):
     global pio_sm
-    pio_sm = rp2.StateMachine(0, extclk, freq = 96000000, in_base=DBG_CPU_POST_OUT7, set_base=CPU_PLL_BYPASS)
+    pio_sm = rp2.StateMachine(0, extclk, freq = 192000000, in_base=DBG_CPU_POST_OUT7, set_base=CPU_PLL_BYPASS)
 
     pio_sm.active(0)
     pio_sm.restart()
@@ -94,7 +110,7 @@ def init_sm(reset_assert_delay):
     mem32[0x4001c004 + (13*4)] = 0b01110011
 
     # same delay as RGH1.2
-    pll_delay = int(0.4096 * 96000000)
+    pll_delay = int(0.4096 * 192000000) if USING_GLITCH3_IMAGE is False else int(0.01 * 192000000)
 
     reset_delay = reset_assert_delay
 
@@ -130,14 +146,38 @@ def do_reset_glitch() -> int:
             last_post = this_post
             if this_post == 0xDA:
                 ticks_DA = t
+                
+                print("start DA timeout")
+                start_tick = t
+                bits = v & POST_BITS_MASK
+                while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == bits:
+                    if (ticks_us() - start_tick) > 1000:
+                        print("FAIL: CPU crashed at 0xDA")
+                        _force_reset()
+                        return 1
 
         if this_post == 0xDB:
             print("got candidate!!!")
-            # return 1
+            start_tick = t
+            bits = v & POST_BITS_MASK
+            while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == bits:
+                if (ticks_us() - start_tick) > 200000:
+                    print("FAIL: CPU crashed at 0xDB")
+                    _force_reset()
+                    return 1
 
         if this_post == 0x10:
             print("FAIL: SMC timed out")
             return 0
+        
+        if USING_GLITCH3_IMAGE is False and this_post == 0x22:
+            start_tick = t
+            bits = v & POST_BITS_MASK
+            while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == bits:
+                if (ticks_us() - start_tick) > 80000:
+                    print("FAIL: CPU crashed at 0x22")
+                    _force_reset()
+                    return 1
 
         if this_post == 0xF2:
             print("FAIL: hash check mismatch")
@@ -145,6 +185,8 @@ def do_reset_glitch() -> int:
             # when EXT_CLK not asserted this is around 250-255 usec.
             # when it is it can be anywhere between 610-650 usec.
             print(f"-> DA -> F2 = {t-ticks_DA} usec")
+
+            _force_reset()
             return 1
 
 
@@ -159,9 +201,12 @@ def do_reset_glitch_loop():
     
     # with 1N1412 diodes
     # @ 96 MHz:
-    # - 58893, 58904, 58907, 58914, 58915, 58922, 58929, 58942, 58946, 58949
-    # around 117900 @ 192 MHz
-    reset_trial = 58949
+    # - longer pulses: 58893, 58904, 58907, 58914, 58915, 58922, 58929, 58942, 58946, 58949
+    # - shorter pulses: 58950 onwards
+    # @ 192 MHz:
+    # - longer pulses: around 117900
+    # - shorter pulses: 117904-117921 works with post width of 1-3 cycles but is inconsistent
+    reset_trial = 117916
     
     while True:
         print(f"start trial of: {reset_trial}")
@@ -174,4 +219,4 @@ def do_reset_glitch_loop():
             init_sm(0)
             return
         # elif result != 0:
-        reset_trial -= 1
+        # reset_trial += 1
