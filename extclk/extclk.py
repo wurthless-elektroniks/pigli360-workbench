@@ -18,6 +18,10 @@ Current status: Takes a few attempts but can boot Xenons.
 Use of the Glitch3 image (xenon_glitch3.ecc) and speedups below are strongly recommended
 to get fast boots.
 
+Hardware-specific stuff:
+- Xenon: Works okay, even better with speedups
+- Elpis with Samsung RAMs: CPU crashes and reboots when CB_B starts
+
 Further reading:
 https://github.com/Octal450/EXT_CLK/tree/master/matrix-coolrunner-192mhz
 '''
@@ -67,7 +71,7 @@ def extclk():
     wait(0, pin, 0)                       # 9
     label("10")
     jmp(y_dec, "10")                      # 10
-    set(pindirs, 3)                  [1]  # 11
+    set(pindirs, 3)                  [0]  # 11
     set(pins, 3)                          # 12
     set(pindirs, 1)                       # 13
     set(y, 31)                       [31] # 14
@@ -223,8 +227,9 @@ def do_reset_glitch_loop():
     # - Octal450's source uses ~118000 cycles (118002 for Xenon, 118008 for Zephyr)
     #
     # New PLL de-assert timings @ 192 MHz
-    # - 117970 - 118002, 117999 works
-    reset_trial = 117999
+    # - Xenon: 117970 - 118002, 117999 works
+    # - Samsung Elpis: 117999
+    reset_trial = 118000
     
     while True:
         print(f"start trial of: {reset_trial}")

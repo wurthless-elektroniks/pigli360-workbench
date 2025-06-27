@@ -17,20 +17,20 @@ to make a RP2040-based glitcher, go looking for those.
 
 Common phat modding methods:
 - RGH1.2: Done, tested working on Falcon, not sure how it will work on Jasper yet
-- EXT_CLK: Done, tested working on Xenon, but can take a few attempts to boot. Speedup hacks
-  and the use of Glitch3 images are strongly recommended.
+- EXT_CLK: Done, tested working on Xenon, but can take a few attempts to boot.
 
-Novel concepts for glitching:
+Novel glitching concepts implemented here:
 - RGH1.3: RGH1.2 but with a RGH3-like image with the CB_X intermediate loader. Boots in around the same amount
   of time as RGH1.2, but with the advantage that we can easily detect a failed boot and restart immediately.
   Code is in `rgh12/` with the appropriate ECC images in `ecc/`.
+- EXT_CLK+3: EXT_CLK but with a Glitch3 image. Vastly speeds up glitching attempts on Xenons.
 - RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC. Not working; CPU crashes at 0x22 every time.
-- EXT+3: Similar concept for Zephyr boards combining EXT_CLK and I2C slowdown. Might be unstable.
 
 Other stuff I could conceptualize:
 - Method to use I2C to disable the 100 MHz CPU clock and inject a slower clock signal in its place.
   Should be far more effective than EXT_CLK. Likely impossible without a properly temperature compensated
   external clock generator.
+- I2C + EXT_CLK slowdown for Zephyrs. Might not be stable.
 - Reset glitch attack against the bootrom. All RGH attacks target CB, but none so far have
   targeted the signature check in the bootrom. Given the 360 has been out for 20 years I'm not
   getting my hopes up for this one.
