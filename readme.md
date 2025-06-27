@@ -68,6 +68,7 @@ This is just the experiments of an idiot but it's standing on the work of giants
 - GliGli and team for original RGH1 and RGH2 attacks
 - 15432 for RGH1.2 and RGH3
 - Octal450 for RGH1.2 V2 and EXT_CLK
+- NathanY3G for the [RP2040 PIO Simulator](https://github.com/NathanY3G/rp2040-pio-emulator) which was used in development
 
 ## Further reading
 

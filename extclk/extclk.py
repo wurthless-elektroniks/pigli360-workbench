@@ -57,28 +57,33 @@ def extclk():
     mov(x, osr)                           # 1
     pull(noblock)                         # 2
     mov(y, osr)                           # 3
-    wait(0, pin, 1)                       # 4
-    wait(1, pin, 0)                       # 5
-    label("6")
-    jmp(x_dec, "6")                       # 6
-    set(pins, 1)                          # 7
-    wait(1, pin, 1)                       # 8
-    label("9")
-    jmp(y_dec, "9")                       # 9
-    set(pindirs, 3)                   [2] # 10
-    set(pins, 3)                      [3] # 11
-    set(pindirs, 1)                       # 12
-
-    set(x,31) [31]
-    label("p")
-    nop() [31]
-    nop() [31]
-    jmp(x_dec,"p") [31]
-
-    set(pins, 0)                          # 16
+    wait(1, pin, 0)                       # 4
+    wait(0, pin, 0)                       # 5
+    wait(1, pin, 0)                       # 6
+    label("7")
+    jmp(x_dec, "7")                       # 7
+    set(pins, 1)                          # 8
+    wait(0, pin, 0)                       # 9
+    label("10")
+    jmp(y_dec, "10")                      # 10
+    set(pindirs, 3)                  [3]  # 11
+    set(pins, 3)                          # 12
+    set(pindirs, 1)                       # 13
+    set(y, 31)                       [31] # 14
+    label("15")
+    set(x, 31)                       [31] # 15
+    label("16")
+    nop()                            [13] # 16
+    jmp(x_dec, "16")                 [31] # 17
+    jmp(y_dec, "15")                 [31] # 18
+    set(x, 24)                       [14] # 19
+    label("20")
+    jmp(x_dec, "20")                 [31] # 20
+    set(pins, 0)                          # 21
     wrap_target()
-    nop()                                 # 17
+    nop()                                 # 22
     wrap()
+
 
 pio_sm = None
 
