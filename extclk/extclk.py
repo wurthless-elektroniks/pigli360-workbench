@@ -12,10 +12,11 @@ EXT_CLK was created to work around this. It asserts CPU_EXT_CLK_EN to cut the
 PLL unit out of the picture and substitute an external clock source, which is
 still based on the CPU's core 100 MHz clock. However, this barely slows down the
 CPU: on RGH1.2, POST 0xDA takes close to 7300 usec while on EXT_CLK it takes 600 usec.
-As such, the timing is super precise and the RP2040 might not be able to consistently
-glitch the system.
+As such, the timing is super precise and consistent boots are hard to get.
 
-Current status: Works, but is very slow, even with forced resets to speedup the boot.
+Current status: Takes a few attempts but can boot Xenons.
+Use of the Glitch3 image (xenon_glitch3.ecc) and speedups below are strongly recommended
+to get fast boots.
 
 Further reading:
 https://github.com/Octal450/EXT_CLK/tree/master/matrix-coolrunner-192mhz
@@ -66,7 +67,7 @@ def extclk():
     wait(0, pin, 0)                       # 9
     label("10")
     jmp(y_dec, "10")                      # 10
-    set(pindirs, 3)                  [3]  # 11
+    set(pindirs, 3)                  [1]  # 11
     set(pins, 3)                          # 12
     set(pindirs, 1)                       # 13
     set(y, 31)                       [31] # 14
@@ -219,8 +220,11 @@ def do_reset_glitch_loop():
     # @ 192 MHz:
     # - longer pulses: around 117900
     # - shorter pulses: 117904-117921 works with post width of 1-3 cycles but is inconsistent
-    # - Octal450's source uses ~118000 cycles
-    reset_trial = 117916
+    # - Octal450's source uses ~118000 cycles (118002 for Xenon, 118008 for Zephyr)
+    #
+    # New PLL de-assert timings @ 192 MHz
+    # - 117970 - 118002, 117999 works
+    reset_trial = 117999
     
     while True:
         print(f"start trial of: {reset_trial}")
@@ -233,4 +237,4 @@ def do_reset_glitch_loop():
             init_sm(0)
             return
         # elif result != 0:
-        # reset_trial += 1
+            # reset_trial -= 1

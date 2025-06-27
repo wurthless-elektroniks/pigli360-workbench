@@ -17,9 +17,8 @@ to make a RP2040-based glitcher, go looking for those.
 
 Common phat modding methods:
 - RGH1.2: Done, tested working on Falcon, not sure how it will work on Jasper yet
-- EXT_CLK: Works, but is too slow to be useful. EXT_CLK uses far less precise slowdown than PLL
-  (maybe 3-11x slowdown) and as such requires more accurate timings. Some way of getting the RP2040
-  to run off the 48 MHz system standby clock will be required, most likely using a high speed 74-series counter IC.
+- EXT_CLK: Done, tested working on Xenon, but can take a few attempts to boot. Speedup hacks
+  and the use of Glitch3 images are strongly recommended.
 
 Novel concepts for glitching:
 - RGH1.3: RGH1.2 but with a RGH3-like image with the CB_X intermediate loader. Boots in around the same amount
