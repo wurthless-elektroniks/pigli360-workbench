@@ -1,16 +1,24 @@
 '''
 EXT_CLK
 
-Couldn't find any public documentation about this so an explanation.
+Much of this was initially based on RGH1.2, written before EXT_CLK became public.
+Original VHDL by Octal450, based on work by 15432 and GliGli
+Thanks again to Octal for releasing the EXT_CLK source.
 
-CPU_PLL_BYPASS causes instability/crashes on Waternoose boards so EXT_CLK
-was created to work around this. While asserting CPU_PLL_BYPASS slows the
-CPU down 128x, CPU_EXT_CLK barely slows the CPU down (could be anywhere from
-3x to 11x). 
+CPU_PLL_BYPASS doesn't work reliably when glitching Waternoose boards.
+While the CPU will slow down, it will often ignore our reset pulses.
 
-As such the timing is super precise and may not even be possible on RP2040.
+EXT_CLK was created to work around this. It asserts CPU_EXT_CLK_EN to cut the
+PLL unit out of the picture and substitute an external clock source, which is
+still based on the CPU's core 100 MHz clock. However, this barely slows down the
+CPU: on RGH1.2, POST 0xDA takes close to 7300 usec while on EXT_CLK it takes 600 usec.
+As such, the timing is super precise and the RP2040 might not be able to consistently
+glitch the system.
 
 Current status: Works, but is very slow, even with forced resets to speedup the boot.
+
+Further reading:
+https://github.com/Octal450/EXT_CLK/tree/master/matrix-coolrunner-192mhz
 '''
 
 from time import sleep, ticks_us
@@ -206,6 +214,7 @@ def do_reset_glitch_loop():
     # @ 192 MHz:
     # - longer pulses: around 117900
     # - shorter pulses: 117904-117921 works with post width of 1-3 cycles but is inconsistent
+    # - Octal450's source uses ~118000 cycles
     reset_trial = 117916
     
     while True:

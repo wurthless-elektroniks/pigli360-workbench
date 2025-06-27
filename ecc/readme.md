@@ -20,3 +20,9 @@ But it turns out CB_X can be very potent with the normal PLL and CPU_EXT_CLK att
 
 As such, this can speed up glitch attacks such that a boot can be attempted once per second.
 For comparison, CR4 takes about 4 seconds to retry and SMC+ takes about two.
+
+HOWEVER:
+
+There is a good chance the CPU will still crash in CB_B at 0x2E (HWINIT). This is the typical behavior on
+Jaspers. Therefore there is a chance that Glitch3 won't actually speed the boot up much in practice.
+Credit to Octal for this info.
