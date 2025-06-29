@@ -20,7 +20,7 @@ to get fast boots.
 
 Hardware-specific stuff:
 - Xenon: Works okay, even better with speedups
-- Elpis with Samsung RAMs: CPU crashes and reboots when CB_B starts
+- Elpis with Samsung RAMs: Requires 7378 CB but does work
 
 Further reading:
 https://github.com/Octal450/EXT_CLK/tree/master/matrix-coolrunner-192mhz
@@ -71,7 +71,7 @@ def extclk():
     wait(0, pin, 0)                       # 9
     label("10")
     jmp(y_dec, "10")                      # 10
-    set(pindirs, 3)                  [0]  # 11
+    set(pindirs, 3)                  [1]  # 11
     set(pins, 3)                          # 12
     set(pindirs, 1)                       # 13
     set(y, 31)                       [31] # 14
@@ -196,6 +196,19 @@ def do_reset_glitch() -> int:
                     print("FAIL: CPU crashed at 0x22")
                     _force_reset()
                     return 1
+                
+        if USING_GLITCH3_IMAGE is True:
+            if this_post == 0x54:
+                # CB_X will always die at POST 0x54 upon a failed boot attempt.
+                # this makes it far easier to try again in case of a failed boot
+                start_tick = t
+                bits = v & POST_BITS_MASK
+                while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == bits:
+                    if (ticks_us() - start_tick) > 80000:
+                        print("FAIL: CB_X timeout")
+                        _force_reset()
+                        break
+
 
         if this_post == 0xF2:
             print("FAIL: hash check mismatch")
@@ -228,7 +241,7 @@ def do_reset_glitch_loop():
     #
     # New PLL de-assert timings @ 192 MHz
     # - Xenon: 117970 - 118002, 117999 works
-    # - Samsung Elpis: 117999
+    # - Samsung Elpis: 118000
     reset_trial = 118000
     
     while True:
