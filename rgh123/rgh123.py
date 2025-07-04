@@ -2,6 +2,9 @@
 RGH 1.2.3
 The method that sounds like a shitpost, but isn't.
 
+Thanks to 15432 for original RGH3 and Octal450 for bugfix suggestions in other glitchfiles
+that were ported to this one to get it working.
+
 This is basically RGH3 but on a microcontroller for better precision.
 
 Status: 27 MHz mode done, 10 MHz still todo.
@@ -54,7 +57,7 @@ def resetter():
     wait(0, pin, 0)                       # 0xDA
     label("9")
     jmp(y_dec, "9")                       # 9
-    set(pindirs, 1)                  [3] # 10
+    set(pindirs, 1)                  [11] # 10
     set(pins, 1)                          # 11
     set(pindirs, 0)                       # 12
     set(y, 31)                       [31] # 14
@@ -113,6 +116,10 @@ def init_sm(reset_assert_delay):
     pio_sm.put(reset_delay)
     print("buffered FIFO")
 
+def _force_reset():
+    CPU_RESET.init(Pin.OUT)
+    CPU_RESET.value(0)
+    CPU_RESET.init(Pin.IN)
 
 def do_reset_glitch() -> int:
     CPU_PLL_BYPASS.value(0)
@@ -167,6 +174,16 @@ def do_reset_glitch() -> int:
                 if this_post == 0xDB:
                     print("got candidate!!!")
 
+            if this_post == 0x54:
+                # CB_X will always die at POST 0x54 upon a failed boot attempt.
+                # this makes it far easier to try again in case of a failed boot
+                start_tick = t
+                bits = v & POST_BITS_MASK
+                while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == bits:
+                    if (ticks_us() - start_tick) > 80000:
+                        print("FAIL: CB_X timeout")
+                        _force_reset()
+                        break
 
             if this_post == 0x00:
                 print("FAIL: SMC timed out")
@@ -194,11 +211,12 @@ def do_reset_glitch_loop():
     #
     # 27 MHz timings, 1N400x on bits 7-1, 1N4148 on bit 0:
     # - 1292386-1292395, though it's much wider than that obvs
+    # - RGH3 prefers a wider pulse width, 8 cycles works
     #
     # 10 MHz timings:
     # - 0xDA -> 0xF2 transition at approx 150-155 ms
     #
-    reset_trial = 1292386
+    reset_trial = 1292388
     while True:
         print(f"start trial of: {reset_trial}")
 
