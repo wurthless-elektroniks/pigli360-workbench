@@ -35,16 +35,34 @@ POST_D6        = 0xD6 << 15
 # DBG_CPU_POST_OUT6 = post bit 1 for RGH 1, 3
 DBG_CPU_POST_OUT0 = Pin(22, Pin.IN, Pin.PULL_UP)
 DBG_CPU_POST_OUT1 = Pin(21, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT2 = Pin(20, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT3 = Pin(19, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT4 = Pin(18, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT5 = Pin(17, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT6 = Pin(16, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT7 = Pin(15, Pin.IN, Pin.PULL_UP)
+DBG_CPU_POST_OUT2 = Pin(20, Pin.IN, Pin.PULL_UP) # bit 5
+DBG_CPU_POST_OUT3 = Pin(19, Pin.IN, Pin.PULL_UP) # bit 4 
+DBG_CPU_POST_OUT4 = Pin(18, Pin.IN, Pin.PULL_UP) # bit 3
+DBG_CPU_POST_OUT5 = Pin(17, Pin.IN, Pin.PULL_UP) # bit 2
+DBG_CPU_POST_OUT6 = Pin(16, Pin.IN, Pin.PULL_UP) # bit 1
+DBG_CPU_POST_OUT7 = Pin(15, Pin.IN, Pin.PULL_UP) # bit 0
 
 # outputs
 CPU_RESET           = Pin(14, Pin.IN) # will switch to output later
 CPU_PLL_BYPASS      = Pin(13, Pin.OUT)
+
+@rp2.asm_pio()
+def transitiongetter():
+    set(y, 0)                             # 0
+    wait(1, pin, 0)                       # 1
+    wait(0, pin, 0)                       # 2
+    wait(1, pin, 0)                       # 3
+    wait(0, pin, 0)                       # 4
+    jmp(y_dec, "6")                       # 5
+    label("6")
+    jmp(pin, "8")                         # 6
+    jmp(y_dec, "6")                       # 7
+    label("8")
+    mov(isr, y)                           # 8
+    push(noblock)                         # 9
+    wrap_target()
+    nop()                                 # 10
+    wrap()
 
 
 @rp2.asm_pio(set_init=[PIO.IN_LOW])
@@ -86,6 +104,15 @@ def monitor_post():
             last_post = this_post
 
 GLITCH_CLOCK_RATE = 48000000
+
+def init_sm_transitiongetter():
+    global pio_sm
+    pio_sm = rp2.StateMachine(0, transitiongetter, freq = GLITCH_CLOCK_RATE * 2, in_base=DBG_CPU_POST_OUT7, jmp_pin=DBG_CPU_POST_OUT2)
+
+    pio_sm.active(0)
+    pio_sm.restart()
+    pio_sm.active(0)
+    print("transitiongetter sm armed")
 
 def init_sm(reset_assert_delay):
     global pio_sm
@@ -132,6 +159,8 @@ def do_reset_glitch() -> int:
     pio_sm.active(1)
 
     CPU_PLL_BYPASS.value(1)
+
+    i2c_slowed = True
     i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x28]))
     CPU_PLL_BYPASS.value(0)
 
@@ -167,12 +196,14 @@ def do_reset_glitch() -> int:
 
                 CPU_PLL_BYPASS.value(0)
                 i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
+                i2c_slowed = False
             
             if this_post != last_post:
                 print(f"{this_post:02x}")
                 last_post = this_post
                 if this_post == 0xDB:
                     print("got candidate!!!")
+                    # return 2
 
             if this_post == 0x54:
                 # CB_X will always die at POST 0x54 upon a failed boot attempt.
@@ -198,25 +229,28 @@ def do_reset_glitch() -> int:
                 # note also that if your reset wait value is too high, it will
                 # cause this result to be skewed upwards.
                 print(f"-> DA -> F2 = {t-ticks_DA} usec. pio {t-time_pio_finished} usec")
+                _force_reset()
                 return 1
     finally:
-        i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
+        if i2c_slowed is True:
+            i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
         CPU_PLL_BYPASS.value(0)
 
 def do_reset_glitch_loop():
     freq(192000000)
-
     
     # timings assume glitch3 image. see ecc/ directory for files
     #
     # 27 MHz timings, 1N400x on bits 7-1, 1N4148 on bit 0:
-    # - 1292386-1292395, though it's much wider than that obvs
+    # - 0xDA -> 0xF2 happens around 1324079 cycles
+    # - Winning values: 1292386-1292395, though it's much wider than that obvs
     # - RGH3 prefers a wider pulse width, 8 cycles works
     #
     # 10 MHz timings:
     # - 0xDA -> 0xF2 transition at approx 150-155 ms
+    #   (around 7472097 cycles @ 48 MHz/155.66869 ms)
     #
-    reset_trial = 1292388
+    reset_trial = 1292390
     while True:
         print(f"start trial of: {reset_trial}")
 
@@ -228,4 +262,4 @@ def do_reset_glitch_loop():
             init_sm(0)
             return
         # elif result != 0:
-        #reset_trial -= 1
+        # reset_trial -= 10
