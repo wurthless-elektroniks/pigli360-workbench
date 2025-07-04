@@ -24,7 +24,8 @@ Novel glitching concepts implemented here:
   of time as RGH1.2, but with the advantage that we can easily detect a failed boot and restart immediately.
   Code is in `rgh12/` with the appropriate ECC images in `ecc/`.
 - EXT_CLK+3: EXT_CLK but with a Glitch3 image. Vastly speeds up glitching attempts on Xenons.
-- RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC. Not working; CPU crashes at 0x22 every time.
+- RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC, effectively making it RGH3 with a glitch chip.
+  Works, Falcon boots to XeLL, have to test with Jasper as well.
 
 Other stuff I could conceptualize:
 - Method to use I2C to disable the 100 MHz CPU clock and inject a slower clock signal in its place.

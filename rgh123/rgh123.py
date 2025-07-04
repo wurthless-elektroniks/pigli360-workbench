@@ -4,7 +4,7 @@ The method that sounds like a shitpost, but isn't.
 
 This is basically RGH3 but on a microcontroller for better precision.
 
-Status: Not working, gets stuck on POST 0x22 every time.
+Status: 27 MHz mode done, 10 MHz still todo.
 
 Bugs:
 - I2C can shit itself several times. SoftI2C can crap out, or HANA/SMC
@@ -54,12 +54,19 @@ def resetter():
     wait(0, pin, 0)                       # 0xDA
     label("9")
     jmp(y_dec, "9")                       # 9
-    set(pindirs, 1)                  [31] # 10
-    nop() [31]
-    nop() [31]
-    nop() [31]
+    set(pindirs, 1)                  [3] # 10
     set(pins, 1)                          # 11
     set(pindirs, 0)                       # 12
+    set(y, 31)                       [31] # 14
+    label("15")
+    set(x, 31)                       [31] # 15
+    label("16")
+    nop()                            [13] # 16
+    jmp(x_dec, "16")                 [31] # 17
+    jmp(y_dec, "15")                 [31] # 18
+    set(x, 24)                       [14] # 19
+    label("20")
+    jmp(x_dec, "20")                 [31] # 20
     push(noblock)
     wrap_target()
     nop()                                 # 15
@@ -181,19 +188,17 @@ def do_reset_glitch() -> int:
 
 def do_reset_glitch_loop():
     freq(192000000)
+
+    
     # timings assume glitch3 image. see ecc/ directory for files
     #
-    # 27 MHz timings:
-    # - with slow 1N400x diodes: 1292328 - 1292332 @ 48 MHz
-    # - with 1N4148 on POST bit 0: 1292327 - 1292330
-    #
-    # this does get CB_B executing, but then the CPU crashes at 0x22.
-    # occasionally weird POST codes show up (0x88, 0x44, etc.)
+    # 27 MHz timings, 1N400x on bits 7-1, 1N4148 on bit 0:
+    # - 1292386-1292395, though it's much wider than that obvs
     #
     # 10 MHz timings:
     # - 0xDA -> 0xF2 transition at approx 150-155 ms
     #
-    reset_trial = 1292328
+    reset_trial = 1292386
     while True:
         print(f"start trial of: {reset_trial}")
 
@@ -205,4 +210,4 @@ def do_reset_glitch_loop():
             init_sm(0)
             return
         # elif result != 0:
-        reset_trial -= 1
+        #reset_trial -= 1
