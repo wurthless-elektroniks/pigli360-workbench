@@ -7,7 +7,7 @@ that were ported to this one to get it working.
 
 This is basically RGH3 but on a microcontroller for better precision.
 
-Status: 27 MHz mode done, 10 MHz still todo.
+Status: 27 MHz mode done. 10 MHz mode a mystery.
 
 Bugs:
 - I2C can shit itself several times. SoftI2C can crap out, or HANA/SMC
@@ -131,9 +131,6 @@ def init_sm(reset_assert_delay):
     else:
         raise RuntimeError("cannot set I/O drive...")
 
-    # reset delay is around 26.924 ms in RGH3
-    # that's about 1292352 cycles @ 48 MHz
-    # actual working or plausible delay value not found yet
     reset_delay = reset_assert_delay
 
     print("using these settings")
@@ -152,24 +149,30 @@ def do_reset_glitch() -> int:
     CPU_PLL_BYPASS.value(0)
     i2c = SoftI2C(sda=Pin(8),scl=Pin(9),freq=100000)
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D5:
-        pass 
+        pass
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D6:
         pass
 
     pio_sm.active(1)
 
+    # per 15432:
+    # it's better to force PLL bypass mode because, once the I2C slowdown kicks in,
+    # it gives time for the PLL to lock to the slower frequency
     CPU_PLL_BYPASS.value(1)
 
     i2c_slowed = True
+
+    # default clock is [ 0x14, 0x44, 0xE8, 0x08 ].
+    # 27 MHz mode (HANA reference clock bypass) is [ 0x14, 0x44, 0xE8, 0x28 ].
+    #
+    # 15432 also found [ 0x14, 0x44, 0xE8, 0x88 ], but this is way too unstable
+    # to be useful in a glitching attack.
     i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x28]))
+
     CPU_PLL_BYPASS.value(0)
 
     print("0xD6 arrived")
 
-    # default clock is [ 0x14, 0x44, 0xE8, 0x08 ]
-    # 27 MHz mode is [ 0x14, 0x44, 0xE8, 0x28 ]
-    # 15432 also found [ 0x14, 0x44, 0xE8, 0x88 ], maybe this is RGH3's 10 MHz mode?
-    
     last_post = 0
 
     ticks_DA = 0
@@ -244,7 +247,7 @@ def do_reset_glitch_loop():
     # 27 MHz timings, 1N400x on bits 7-1, 1N4148 on bit 0:
     # - 0xDA -> 0xF2 happens around 1324079 cycles
     # - Winning values: 1292386-1292395, though it's much wider than that obvs
-    # - RGH3 prefers a wider pulse width, 8 cycles works
+    # - RGH3 prefers a wider pulse width, 8-12 cycles works
     #
     # 10 MHz timings:
     # - 0xDA -> 0xF2 transition at approx 150-155 ms
@@ -261,5 +264,4 @@ def do_reset_glitch_loop():
         if result == 2:
             init_sm(0)
             return
-        # elif result != 0:
-        # reset_trial -= 10
+
