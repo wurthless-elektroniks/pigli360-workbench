@@ -76,6 +76,7 @@ def resetter():
     label("9")
     jmp(y_dec, "9")                       # 9
     set(pindirs, 1)                  [11] # 10
+
     set(pins, 1)                          # 11
     set(pindirs, 0)                       # 12
     set(y, 31)                       [31] # 14
@@ -92,6 +93,8 @@ def resetter():
     wrap_target()
     nop()                                 # 15
     wrap()
+
+USING_10_MHZ_MODE = False
 
 pio_sm = None
 
@@ -145,9 +148,29 @@ def _force_reset():
     CPU_RESET.value(0)
     CPU_RESET.init(Pin.IN)
 
+def _i2c_go_slow(i2c):
+    if USING_10_MHZ_MODE is True:
+        # 10 MHz - reverse engineered from first RGH3 release.
+        # apparently not as stable as 27 MHz, as 15432 writes
+        i2c.writeto_mem(0x70, 0xCD, bytearray([0x04, 0x00, 0x09, 0x10, 0x01]))
+    else:
+        # 27 MHz - same between RGH3 opensource version and original release
+        # 15432 also found [ 0x14, 0x40, 0xE8, 0x88 ], but it is way too unstable
+        # to be useful in a glitching attack.
+        i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x40, 0xE8, 0x28]))
+
+def _i2c_go_normal(i2c):
+    if USING_10_MHZ_MODE is True:
+        i2c.writeto_mem(0x70, 0xCD, bytearray([0x04, 0x4E, 0x80, 0x0C, 0x02]))
+    else:
+        i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x40, 0xE8, 0x08]))
+
+
 def do_reset_glitch() -> int:
     CPU_PLL_BYPASS.value(0)
     i2c = SoftI2C(sda=Pin(8),scl=Pin(9),freq=100000)
+    _i2c_go_normal(i2c)
+
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D5:
         pass
     while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) != POST_D6:
@@ -161,13 +184,7 @@ def do_reset_glitch() -> int:
     CPU_PLL_BYPASS.value(1)
 
     i2c_slowed = True
-
-    # default clock is [ 0x14, 0x44, 0xE8, 0x08 ].
-    # 27 MHz mode (HANA reference clock bypass) is [ 0x14, 0x44, 0xE8, 0x28 ].
-    #
-    # 15432 also found [ 0x14, 0x44, 0xE8, 0x88 ], but this is way too unstable
-    # to be useful in a glitching attack.
-    i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x28]))
+    _i2c_go_slow(i2c)
 
     CPU_PLL_BYPASS.value(0)
 
@@ -185,20 +202,22 @@ def do_reset_glitch() -> int:
             t = ticks_us()
             this_post = (v >> 15) & 0xFF
 
-            # if last_post != 0xD6 and this_post == 0xD6:
-
             if last_post != 0xD9 and this_post == 0xD9:
-                # 0.035 for 27 MHz, 0.202-0.206 for 10 MHz
-                sleep(0.035)
+                # 0.035 for 27 MHz, 0.096 for 10 MHz
+                sleep(0.096 if USING_10_MHZ_MODE else 0.035)
                 CPU_PLL_BYPASS.value(1)
 
             if last_post != 0xDA and this_post == 0xDA:
                 ticks_DA = t
+
+                # for transitiongetter debug
+                # print(~pio_sm.get() + 0x0100000000)
+                
                 pio_sm.get()
                 time_pio_finished = ticks_us()
 
                 CPU_PLL_BYPASS.value(0)
-                i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
+                _i2c_go_normal(i2c)
                 i2c_slowed = False
             
             if this_post != last_post:
@@ -236,7 +255,7 @@ def do_reset_glitch() -> int:
                 return 1
     finally:
         if i2c_slowed is True:
-            i2c.writeto_mem(0x70, 0xCE, bytearray([0x04, 0x14, 0x44, 0xE8, 0x08]))
+            _i2c_go_normal(i2c)
         CPU_PLL_BYPASS.value(0)
 
 def do_reset_glitch_loop():
@@ -247,13 +266,15 @@ def do_reset_glitch_loop():
     # 27 MHz timings, 1N400x on bits 7-1, 1N4148 on bit 0:
     # - 0xDA -> 0xF2 happens around 1324079 cycles
     # - Winning values: 1292386-1292395, though it's much wider than that obvs
-    # - RGH3 prefers a wider pulse width, 8-12 cycles works
     #
     # 10 MHz timings:
-    # - 0xDA -> 0xF2 transition at approx 150-155 ms
-    #   (around 7472097 cycles @ 48 MHz/155.66869 ms)
+    # - 0xDA -> 0xF2 transition at approx 76000 usec
+    #   (3575010-3575012 cycles @ 48 MHz, timing varies)
+    # - Winning values: 3489416-3489438 (3489416 earliest)
+    # - 10 MHz mode seems to play nicer with a short pulse width; long pulse widths
+    #   can cause XeLL to freeze at boot or throw an exception later during init.
     #
-    reset_trial = 1292390
+    reset_trial = 3489424 if USING_10_MHZ_MODE is True else 1292386
     while True:
         print(f"start trial of: {reset_trial}")
 
@@ -264,4 +285,5 @@ def do_reset_glitch_loop():
         if result == 2:
             init_sm(0)
             return
-
+        # elif result == 1:
+        # reset_trial += 1
