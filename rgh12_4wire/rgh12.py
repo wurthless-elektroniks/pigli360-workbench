@@ -21,6 +21,8 @@ POST1_BIT_MASK = 1<<12
 POST0_BIT_MASK = 1<<11
 CPU_RESET_MASK = 1<<10
 
+LED = Pin(25, Pin.OUT)
+
 @rp2.asm_pio(set_init=[PIO.OUT_LOW, PIO.IN_LOW])
 def rgh12():
     pull(noblock)                         # 0
@@ -131,25 +133,25 @@ def do_reset_glitch_loop():
         print("CPU active")
 
         while DBG_CPU_POST_OUT0.value() == 0:
-            pass
+            LED.value(DBG_CPU_POST_OUT7.value())
         print("D0")
 
         while DBG_CPU_POST_OUT6.value() == 0:
-            pass
+            LED.value(DBG_CPU_POST_OUT7.value())
         print("D2")
 
         while DBG_CPU_POST_OUT6.value() != 0:
-            pass
+            LED.value(DBG_CPU_POST_OUT7.value())
         print("D4")
 
         while DBG_CPU_POST_OUT6.value() == 0:
-            pass
+            LED.value(DBG_CPU_POST_OUT7.value())
         print("D6")
 
         pio_sm.active(1)
 
         while CPU_RESET_IN.value() != 0:
-            pass
+            LED.value(DBG_CPU_POST_OUT7.value())
         
         reset_time = ticks_us()
         timeout = False
