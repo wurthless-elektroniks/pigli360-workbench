@@ -3,6 +3,10 @@ from machine import Pin,mem32,freq
 import rp2
 from rp2 import PIO
 
+
+
+CPU_RESET_3V3 = Pin(6, Pin.IN)
+
 DBG_CPU_POST_OUT0 = Pin(22, Pin.IN, Pin.PULL_UP)
 DBG_CPU_POST_OUT1 = Pin(21, Pin.IN, Pin.PULL_UP)
 DBG_CPU_POST_OUT2 = Pin(20, Pin.IN, Pin.PULL_UP)
@@ -30,14 +34,21 @@ def count_posts():
     # pull up enable
     # schmitt trigger
     # fast slew rate
-    mem32[0x4001c004 + (15*4)] = 0b01111011
+    mem32[0x4001c004 + (16*4)] = 0b01111011
 
-    pio_sm = rp2.StateMachine(0, postcount, freq = 192000000, in_base=DBG_CPU_POST_OUT7)
+    pio_sm = rp2.StateMachine(0, postcount, freq = 48000000, in_base=DBG_CPU_POST_OUT7)
     pio_sm.active(1)
+
+    # bit 0 = 28 to 0xF2
+    # bit 1 = 19 to 0xF2
 
     post_count = 0
     while True:
         pio_sm.get()
-        post_count += 1
-        print(post_count)
-        print(f"{mem32[0xD0000004] >> 15:04x}")
+        if CPU_RESET_3V3.value() != 0 and \
+           DBG_CPU_POST_OUT0.value() != 0:
+            post_count += 1
+            print(post_count)
+            print(f"{mem32[0xD0000004] >> 15:04x}")
+        else:
+            post_count = 0

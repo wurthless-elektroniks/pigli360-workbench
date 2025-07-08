@@ -1,0 +1,170 @@
+'''
+RGH1.2 in Micropython, now with less wires
+'''
+from time import sleep, ticks_us
+from machine import Pin,mem32,freq
+import rp2
+from rp2 import PIO
+
+
+RP2040_GPIO_IN = 0xD0000004
+CPU_RESET_OUT     = Pin(15, Pin.IN) # will switch to output later
+CPU_PLL_BYPASS    = Pin(14, Pin.OUT)
+
+DBG_CPU_POST_OUT0 = Pin(13, Pin.IN, Pin.PULL_UP)
+DBG_CPU_POST_OUT6 = Pin(12, Pin.IN, Pin.PULL_UP)
+DBG_CPU_POST_OUT7 = Pin(11, Pin.IN, Pin.PULL_UP)
+CPU_RESET_IN      = Pin(10, Pin.IN, Pin.PULL_UP) # to FT2P11 under southbridge
+
+POST7_BIT_MASK = 1<<13
+POST1_BIT_MASK = 1<<12
+POST0_BIT_MASK = 1<<11
+CPU_RESET_MASK = 1<<10
+
+@rp2.asm_pio(set_init=[PIO.OUT_LOW, PIO.IN_LOW])
+def rgh12():
+    pull(noblock)                         # 0
+    mov(x, osr)                           # 1
+    pull(noblock)                         # 2
+    mov(y, osr)                           # 3
+    wait(1, pin, 0)                       # 4
+    wait(0, pin, 0)                       # 5
+    wait(1, pin, 0)                       # 6
+    label("7")
+    jmp(x_dec, "7")                       # 7
+    set(pins, 1)                          # 8
+    wait(0, pin, 0)                       # 9
+    label("10")
+    jmp(y_dec, "10")                      # 10
+    set(pindirs, 3)                  [3]  # 11
+    set(pins, 3)                          # 12
+    set(pindirs, 1)                       # 13
+    set(y, 31)                       [31] # 14
+    label("15")
+    set(x, 31)                       [31] # 15
+    label("16")
+    nop()                            [13] # 16
+    jmp(x_dec, "16")                 [31] # 17
+    jmp(y_dec, "15")                 [31] # 18
+    set(x, 24)                       [14] # 19
+    label("20")
+    jmp(x_dec, "20")                 [31] # 20
+    set(pins, 0)                          # 21
+    wrap_target()
+    nop()                                 # 22
+    wrap()
+
+pio_sm = None
+
+# set to True for RGH1.3, False for RGH1.2
+USING_GLITCH3_IMAGE = False
+RAPID_RESET = False
+
+def init_sm(reset_assert_delay):
+    global pio_sm
+    pio_sm = rp2.StateMachine(0, rgh12, freq = 48000000, in_base=DBG_CPU_POST_OUT7, set_base=CPU_PLL_BYPASS)
+
+    pio_sm.active(0)
+    pio_sm.restart()
+    pio_sm.active(0)
+    print("restarted sm")
+
+    # change reset output drive params
+    mem32[0x4001c004 + (15*4)] = 0b01110011
+    if mem32[0x4001c004 + (15*4)] == 0b01110011:
+        print("full steam ahead!!")
+    else:
+        raise RuntimeError("cannot set I/O drive...")
+
+    # the "pll delay" is the amount of time we wait between POST 0xD9
+    # and when CPU_PLL_BYPASS is asserted.
+    #
+    # for glitch2 images (standard RGH1.2):
+    # this value is 9600 * 1024 * 2. the matrix/coolrunner source doesn't count
+    # these manually, instead preferring to use a divider, most likely to save
+    # cell space on the FPGA.
+    #
+    # for glitch3 images (this approach is nicknamed "RGH1.3"):
+    # don't go past 408000. even at this value, you'll get failed boots.
+    pll_delay = 19660800 if USING_GLITCH3_IMAGE is False else 408000
+
+    # the "pulse delay" is how long to wait before asserting /RESET after POST 0xDA,
+    # give or take a few cycles for the PIO to do stuff.
+    #
+    # to find the right timing for this, check the POST code when the reset happens.
+    #
+    # when using a large reset pulse (i.e., you're intentionally doing a full CPU reset),
+    # if 0x00 is returned, the CPU rebooted too early.
+    # if 0xF2 is returned, the hash check failed and the value is too high.
+    #
+    # the delay should be 7200-7300 microseconds, with RGH1.2 V2 timing file 21's
+    # preferred value being 7287.9375 microseconds (349821 cycles).
+    # if you find the 0xDA -> 0xF2 transition is nowhere near this value,
+    # something is wrong.
+    reset_delay = reset_assert_delay
+
+    print("using these settings")
+    print(f"- pll delay {pll_delay}")
+    print(f"- reset delay {reset_delay}")
+
+    # populate FIFO - when PIO starts, it'll grab both these values immediately
+    pio_sm.put(pll_delay)
+    pio_sm.put(reset_delay)
+    print("buffered FIFO")
+
+def do_reset_glitch_loop():
+    # this is the key to the whole thing - you have to set frequency
+    # to a multiple of 12 MHz, or this shit won't work
+    freq(192000000)
+
+    # 349821 is timing file 21 and works... ehh... not great
+    # 349819 boots in a couple of attempts
+    # 349818 and a reset pulse width of 4 cycles instaboots my test falcon almost every time
+    reset_trial = 349821
+    
+    while True:
+        print(f"start trial of: {reset_trial}")
+        init_sm(reset_trial)
+        
+        while CPU_RESET_IN.value() == 0:
+            pass
+        print("CPU active")
+
+        while DBG_CPU_POST_OUT0.value() == 0:
+            pass
+        print("D0")
+
+        while DBG_CPU_POST_OUT6.value() == 0:
+            pass
+        print("D2")
+
+        while DBG_CPU_POST_OUT6.value() != 0:
+            pass
+        print("D4")
+
+        while DBG_CPU_POST_OUT6.value() == 0:
+            pass
+        print("D6")
+
+        pio_sm.active(1)
+
+        while CPU_RESET_IN.value() != 0:
+            pass
+        
+        reset_time = ticks_us()
+        timeout = False
+        while CPU_RESET_IN.value() == 0:
+            if (ticks_us() - reset_time > 2):
+                print("FAIL: SMC timeout")
+                timeout = True
+                break
+        if timeout:
+            continue
+
+        print("should be successful???")
+        while CPU_RESET_IN.value() != 0:
+            pass
+
+        print("Power off")
+#        pio_sm.active(0)
+
