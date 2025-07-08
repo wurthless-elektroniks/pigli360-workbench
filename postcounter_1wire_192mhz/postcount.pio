@@ -1,0 +1,7 @@
+.program postcount
+    .wrap_target
+    wait 1 pin 0
+    push noblock
+    wait 0 pin 0
+    push noblock
+    .wrap
