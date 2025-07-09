@@ -7,20 +7,41 @@ import rp2
 from rp2 import PIO
 
 
+RP2040_ZERO = False
+if RP2040_ZERO is True:
+    # RP2040 Zero, pin configuration is temporary
+    # RP2040 Zero clones can run the stock RPi Pico Micropython build.
+    # note that it might be unstable - testing continues
+    PIN_POST_7 = 6
+    PIN_POST_1 = 7
+    PIN_POST_0 = 8
+    PIN_CPU_RESET_IN = 5
+    SET_PIN_BASE = 10
+else:
+    # rpi pico
+    PIN_POST_7 = 13
+    PIN_POST_1 = 12
+    PIN_POST_0 = 11
+    PIN_CPU_RESET_IN = 10
+    SET_PIN_BASE = 14  # 14 = PLL, 15 = reset output
+
+
 RP2040_GPIO_IN = 0xD0000004
-CPU_RESET_OUT     = Pin(15, Pin.IN) # will switch to output later
-CPU_PLL_BYPASS    = Pin(14, Pin.OUT)
 
-DBG_CPU_POST_OUT0 = Pin(13, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT6 = Pin(12, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT7 = Pin(11, Pin.IN, Pin.PULL_UP)
-CPU_RESET_IN      = Pin(10, Pin.IN, Pin.PULL_UP) # to FT2P11 under southbridge
+CPU_RESET_OUT     = Pin(SET_PIN_BASE+1, Pin.IN) # will switch to output later
+CPU_PLL_BYPASS    = Pin(SET_PIN_BASE+0, Pin.OUT)
 
-POST7_BIT_MASK = 1<<13
-POST1_BIT_MASK = 1<<12
-POST0_BIT_MASK = 1<<11
-CPU_RESET_MASK = 1<<10
+DBG_CPU_POST_OUT0 = Pin(PIN_POST_7, Pin.IN, Pin.PULL_UP)
+DBG_CPU_POST_OUT6 = Pin(PIN_POST_1, Pin.IN, Pin.PULL_UP)
+DBG_CPU_POST_OUT7 = Pin(PIN_POST_0, Pin.IN, Pin.PULL_UP)
+CPU_RESET_IN      = Pin(PIN_CPU_RESET_IN, Pin.IN, Pin.PULL_UP) # to FT2P11 under southbridge
 
+POST7_BIT_MASK = 1 << PIN_POST_7
+POST1_BIT_MASK = 1 << PIN_POST_1
+POST0_BIT_MASK = 1 << PIN_POST_0
+CPU_RESET_MASK = 1 << PIN_CPU_RESET_IN
+
+# nb: RP2040 Zero uses a WS2812B - this won't work on that board
 LED = Pin(25, Pin.OUT)
 
 @rp2.asm_pio(set_init=[PIO.OUT_LOW, PIO.IN_LOW])
@@ -119,9 +140,10 @@ def do_reset_glitch_loop():
     # to a multiple of 12 MHz, or this shit won't work
     freq(192000000)
 
-    # 349821 is timing file 21 and works... ehh... not great
-    # 349819 boots in a couple of attempts
-    # 349818 and a reset pulse width of 4 cycles instaboots my test falcon almost every time
+    # in a 4-wire configuration:
+    # 21 seems to work okay for falcon
+    # 24 seems to work okay for jasper
+    # this timing value will depend on your wiring, obvs
     reset_trial = 349821
     
     while True:
