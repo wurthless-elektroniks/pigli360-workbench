@@ -113,11 +113,17 @@ def init_sm(reset_assert_delay):
     pio_sm.put(reset_delay)
     print("buffered FIFO")
 
+
+def _force_reset():
+    CPU_RESET_OUT.init(Pin.OUT)
+    CPU_RESET_OUT.value(0)
+    CPU_RESET_OUT.init(Pin.IN)
+
 def do_reset_glitch_loop():
     freq(192000000)
 
     reset_trial = 1292386
-    
+
     while True:
         print(f"start trial of: {reset_trial}")
         init_sm(reset_trial)
@@ -145,9 +151,38 @@ def do_reset_glitch_loop():
         print("D6")
 
         pio_sm.active(1)
-
         pio_sm.get()
         GPIO0.value(0)
+
+        # if bit 7 still high, the hash check failed
+        if DBG_CPU_POST_OUT0.value() == 1:
+            timeout = False
+
+            reset_time = ticks_us()
+            while DBG_CPU_POST_OUT0.value() == 1:
+                if (ticks_us() - reset_time > 10000):
+                    timeout = True
+                    break
+            
+            if timeout is True:
+                print("FAIL: POST bit 7 still high")
+                _force_reset()
+                continue
+
+        # wait for POST bit 1 to rise
+        if DBG_CPU_POST_OUT6.value() == 0:
+            timeout = False
+
+            reset_time = ticks_us()
+            while DBG_CPU_POST_OUT6.value() == 0:
+                if (ticks_us() - reset_time > 80000):
+                    timeout = True
+                    break
+            
+            if timeout is True:
+                print("FAIL: POST bit 1 did not rise")
+                _force_reset()
+                continue
 
         while CPU_RESET_IN.value() != 0:
             LED.value(DBG_CPU_POST_OUT7.value())
