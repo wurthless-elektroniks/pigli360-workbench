@@ -167,6 +167,7 @@ def do_reset_glitch_loop():
             if timeout is True:
                 print("FAIL: POST bit 7 still high")
                 _force_reset()
+                LED.value(0)
                 continue
 
         # wait for POST bit 1 to rise
@@ -182,6 +183,7 @@ def do_reset_glitch_loop():
             if timeout is True:
                 print("FAIL: POST bit 1 did not rise")
                 _force_reset()
+                LED.value(0)
                 continue
 
         while CPU_RESET_IN.value() != 0:
