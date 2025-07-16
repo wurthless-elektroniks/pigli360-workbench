@@ -140,7 +140,6 @@ def do_reset_glitch_loop():
         while DBG_CPU_POST_OUT6.value() == 0:
             LED.value(DBG_CPU_POST_OUT7.value())
         print("D2")
-        GPIO0.value(1)
 
         while DBG_CPU_POST_OUT6.value() != 0:
             LED.value(DBG_CPU_POST_OUT7.value())
@@ -150,6 +149,7 @@ def do_reset_glitch_loop():
             LED.value(DBG_CPU_POST_OUT7.value())
         print("D6")
 
+        GPIO0.value(1)
         pio_sm.active(1)
         pio_sm.get()
         GPIO0.value(0)
