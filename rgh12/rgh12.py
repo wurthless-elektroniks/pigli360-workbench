@@ -161,8 +161,8 @@ def init_sm(reset_assert_delay):
     print("buffered FIFO")
 
 def _force_reset():
-    CPU_RESET.init(Pin.OUT)
-    CPU_RESET.value(0)
+    CPU_RESET.init(Pin.OUT, value = 0)
+    sleep(0.001)
     CPU_RESET.init(Pin.IN)
 
 def do_reset_glitch() -> int:
@@ -206,7 +206,13 @@ def do_reset_glitch() -> int:
 
         if this_post == 0xDB:
             print("got candidate!!!")
-            # return 1
+            start_tick = t
+            bits = v & POST_BITS_MASK
+            while (mem32[RP2040_GPIO_IN] & POST_BITS_MASK) == bits:
+                if (ticks_us() - start_tick) > 80000:
+                    print("FAIL: 0xDB timeout")
+                    _force_reset()
+                    return
 
         if USING_GLITCH3_IMAGE is True:
             if this_post == 0x54:
@@ -256,4 +262,4 @@ def do_reset_glitch_loop():
             # init_sm(0)
             # return
         # elif result != 0:
-            # reset_trial -= 1
+        # reset_trial += 1

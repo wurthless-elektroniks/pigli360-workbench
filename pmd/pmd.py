@@ -4,6 +4,10 @@ Project Muffdiver (PMD)
 This is the Project Muffin/Mufas approach to RGH1.2.3. The SMC image must be
 hacked to write to the 0xCE registers; pulling DBG_LED low enables the slowdown.
 
+PMD's efficacy is... not great. It may just be due to bugs in this implementation, it might not.
+RGH1.2.3 might be a better method simply because the Pico has more control over I2C than the SMC does.
+PMD also doesn't fix the usual Jasper problems, and it is compatible with less boards than RGH1.2.
+
 Use glitch3_smc+pmd_falcon.ecc in ECC directory.
 Full Glitch3 project to be released eventually (SMC hacking is a pain in the ass).
 '''

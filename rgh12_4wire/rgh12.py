@@ -6,6 +6,11 @@ from machine import Pin,mem32,freq
 import rp2
 from rp2 import PIO
 
+RESET_DELAY            = 349821  # <-- start at 349821
+ENABLE_FAST_RESET_HACK = True    # <-- leave this on to speed up attempts
+BRUTE_FORCE_SEARCH     = False   # <-- set to True to increment reset delay on every attempt
+BRUTE_FORCE_STEP       = 1       # positive = increase, negative = decrease
+# scroll down to PIO program to change pulse width
 
 RP2040_ZERO = False
 if RP2040_ZERO is True:
@@ -39,6 +44,7 @@ CPU_RESET_IN      = Pin(PIN_CPU_RESET_IN, Pin.IN, Pin.PULL_UP) # to FT2P11 under
 POST7_BIT_MASK = 1 << PIN_POST_7
 POST1_BIT_MASK = 1 << PIN_POST_1
 POST0_BIT_MASK = 1 << PIN_POST_0
+POST0_AND_1_BIT_MASK = POST1_BIT_MASK | POST0_BIT_MASK
 CPU_RESET_MASK = 1 << PIN_CPU_RESET_IN
 
 # nb: RP2040 Zero uses a WS2812B - this won't work on that board
@@ -59,7 +65,7 @@ def rgh12():
     wait(0, pin, 0)                       # 9
     label("10")
     jmp(y_dec, "10")                      # 10
-    set(pindirs, 3)                  [3]  # 11
+    set(pindirs, 3)                  [3]  # <-- PULSE WIDTH LENGTH OVER HERE (MINUS 1)
     set(pins, 3)                          # 12
     set(pindirs, 1)                       # 13
     set(y, 31)                       [31] # 14
@@ -73,6 +79,7 @@ def rgh12():
     label("20")
     jmp(x_dec, "20")                 [31] # 20
     set(pins, 0)                          # 21
+    push(noblock)
     wrap_target()
     nop()                                 # 22
     wrap()
@@ -93,11 +100,12 @@ def init_sm(reset_assert_delay):
     print("restarted sm")
 
     # change reset output drive params
-    mem32[0x4001c004 + (15*4)] = 0b01110011
-    if mem32[0x4001c004 + (15*4)] == 0b01110011:
+    mem32[0x4001c004 + ((SET_PIN_BASE+1)*4)] = 0b01110011
+    if mem32[0x4001c004 + ((SET_PIN_BASE+1)*4)] == 0b01110011:
         print("full steam ahead!!")
     else:
         raise RuntimeError("cannot set I/O drive...")
+    
 
     # the "pll delay" is the amount of time we wait between POST 0xD9
     # and when CPU_PLL_BYPASS is asserted.
@@ -135,6 +143,15 @@ def init_sm(reset_assert_delay):
     pio_sm.put(reset_delay)
     print("buffered FIFO")
 
+
+def _force_reset():
+    if ENABLE_FAST_RESET_HACK is True:
+        # this looks like it's fast, but micropython's interpreter
+        # is slow enough for this to actually reset the CPU
+        CPU_RESET_OUT.init(Pin.OUT)
+        CPU_RESET_OUT.value(0)
+        CPU_RESET_OUT.init(Pin.IN)
+
 def do_reset_glitch_loop():
     # this is the key to the whole thing - you have to set frequency
     # to a multiple of 12 MHz, or this shit won't work
@@ -144,33 +161,95 @@ def do_reset_glitch_loop():
     # 21 seems to work okay for falcon
     # 24 seems to work okay for jasper
     # this timing value will depend on your wiring, obvs
-    reset_trial = 349821
+    reset_trial = RESET_DELAY
+
+    if BRUTE_FORCE_SEARCH is True:
+        reset_trial -= BRUTE_FORCE_STEP # because we're adding to it below!
     
     while True:
+        if BRUTE_FORCE_SEARCH is True:
+            reset_trial += BRUTE_FORCE_STEP
         print(f"start trial of: {reset_trial}")
         init_sm(reset_trial)
-        
+        LED.value(0)
+
         while CPU_RESET_IN.value() == 0:
             pass
         print("CPU active")
 
+        timeout = False
+        reset_time = ticks_us()
         while DBG_CPU_POST_OUT0.value() == 0:
+            if (ticks_us() - reset_time > 1000000):
+                timeout = True
+                break
             LED.value(DBG_CPU_POST_OUT7.value())
+
+        if timeout is True:
+            print("FAIL: CPU stuck in coma")
+            continue
+
         print("D0")
 
+        # wait POST bit 1 rise - takes us to 0xD2
         while DBG_CPU_POST_OUT6.value() == 0:
             LED.value(DBG_CPU_POST_OUT7.value())
+
         print("D2")
 
+        # wait POST bit 1 fall - takes us to 0xD4
         while DBG_CPU_POST_OUT6.value() != 0:
             LED.value(DBG_CPU_POST_OUT7.value())
+
         print("D4")
 
+        # wait POST bit 1 rise - takes us to 0xD6
         while DBG_CPU_POST_OUT6.value() == 0:
             LED.value(DBG_CPU_POST_OUT7.value())
         print("D6")
-
+        
+        # run PIO and block until it finishes
         pio_sm.active(1)
+        pio_sm.get()
+        pio_sm.active(0)
+        
+        # speedup hacks only
+        if ENABLE_FAST_RESET_HACK is True:
+            # if bit 7 still high, the hash check failed
+            if (DBG_CPU_POST_OUT0.value()) != 0:
+                timeout = False
+
+                reset_time = ticks_us()
+                while (DBG_CPU_POST_OUT0.value()) != 0:
+                    if (ticks_us() - reset_time > 10000):
+                        timeout = True
+                        break
+                
+                if timeout is True:
+                    print("FAIL: POST bit 7 still high")
+                    _force_reset()
+                    LED.value(0)
+                    continue
+
+            # RGH1.3 only: wait for POST bits 0/1 to rise - that indicates we got out of CB_X.
+            # if we don't see them in time, the boot has failed
+            if USING_GLITCH3_IMAGE is True and (mem32[RP2040_GPIO_IN] & POST0_AND_1_BIT_MASK) == 0:
+                timeout = False
+
+                reset_time = ticks_us()
+                while (mem32[RP2040_GPIO_IN] & POST0_AND_1_BIT_MASK) == 0:
+                    if (ticks_us() - reset_time > 80000):
+                        timeout = True
+                        break
+                
+                if timeout is True:
+                    # possible the SMC reset on us
+                    if CPU_RESET_IN.value() == 0:
+                        print("FAIL: SMC reset on us")
+                    else:
+                        print("FAIL: POST bits 0/1 did not rise")
+                    _force_reset()
+                    continue
 
         while CPU_RESET_IN.value() != 0:
             LED.value(DBG_CPU_POST_OUT7.value())
