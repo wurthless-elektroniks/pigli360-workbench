@@ -6,11 +6,36 @@ from machine import Pin,mem32,freq
 import rp2
 from rp2 import PIO
 
+# ------------------------------------------------------------------------
+#
+# Important Configuration Stuff
+#
+# ------------------------------------------------------------------------
+
 RESET_DELAY            = 349821  # <-- start at 349821
-ENABLE_FAST_RESET_HACK = True    # <-- leave this on to speed up attempts
+ENABLE_FAST_RESET_HACK = True    # <-- set to True to enable rapid resets
 BRUTE_FORCE_SEARCH     = False   # <-- set to True to increment reset delay on every attempt
 BRUTE_FORCE_STEP       = 1       # positive = increase, negative = decrease
+
+HUNT_FOR_RANDOM_VALUES    = False
+RANDOM_VALUE_MIN_VALUE    = 349810
+RANDOM_VALUE_RELOAD_VALUE = 349830
+
+USING_GLITCH3_IMAGE = True       # set to True for RGH1.3 (faster glitch attempts), False for RGH1.2 (better supported)
+
+# Kronos Mode
+# on kronos boards glitch attempts can fail over and over at 0xDA or 0xDB
+# and there's no way to get by it. it doesn't matter if you use speedup
+# hacks or vary the timings, the CPU will always get stuck there.
+#
+# if you turn this on, the pico will force a SMC hard reset and turn off
+# everything, then power the system on.
+FORCE_SMC_RESET_ON_TOO_MANY_BIT_7_FAILURES = True # set to True to enable Kronos Mode
+KRONOS_BIT7_MAX_FAILURES = 1
+
 # scroll down to PIO program to change pulse width
+
+# ------------------------------------------------------------------------
 
 RP2040_ZERO = False
 if RP2040_ZERO is True:
@@ -22,6 +47,9 @@ if RP2040_ZERO is True:
     PIN_POST_0 = 8
     PIN_CPU_RESET_IN = 5
     SET_PIN_BASE = 10
+    PIN_REQUEST_SOFT_RESET = -1
+    PIN_SMC_RST_N = -1
+    PIN_EXT_PWR_ON_N = -1
 else:
     # rpi pico
     PIN_POST_7 = 13
@@ -29,26 +57,35 @@ else:
     PIN_POST_0 = 11
     PIN_CPU_RESET_IN = 10
     SET_PIN_BASE = 14  # 14 = PLL, 15 = reset output
-
+    PIN_REQUEST_SOFT_RESET = 9 # to DBG_LED/FB1F1 if the SMC is hacked to read it
+    PIN_SMC_RST_N     = 7 # to J2B1 pin 5, where the green wire of your NAND programmer goes. also R2P18
+    PIN_EXT_PWR_ON_N  = 8 # to J2B1 pin 11 (WARNING: THERE'S 5V RIGHT NEXT TO IT)
 
 RP2040_GPIO_IN = 0xD0000004
 
 CPU_RESET_OUT     = Pin(SET_PIN_BASE+1, Pin.IN) # will switch to output later
 CPU_PLL_BYPASS    = Pin(SET_PIN_BASE+0, Pin.OUT)
 
-DBG_CPU_POST_OUT0 = Pin(PIN_POST_7, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT6 = Pin(PIN_POST_1, Pin.IN, Pin.PULL_UP)
-DBG_CPU_POST_OUT7 = Pin(PIN_POST_0, Pin.IN, Pin.PULL_UP)
-CPU_RESET_IN      = Pin(PIN_CPU_RESET_IN, Pin.IN, Pin.PULL_UP) # to FT2P11 under southbridge
+DBG_CPU_POST_OUT0  = Pin(PIN_POST_7, Pin.IN, Pin.PULL_UP)
+DBG_CPU_POST_OUT6  = Pin(PIN_POST_1, Pin.IN, Pin.PULL_UP)
+DBG_CPU_POST_OUT7  = Pin(PIN_POST_0, Pin.IN, Pin.PULL_UP)
+CPU_RESET_IN       = Pin(PIN_CPU_RESET_IN, Pin.IN, Pin.PULL_UP) # to FT2P11 under southbridge
+REQUEST_SOFT_RESET = Pin(PIN_REQUEST_SOFT_RESET, Pin.OUT)
+SMC_RST_N          = Pin(PIN_SMC_RST_N, Pin.IN)    # will switch to output later
+EXT_PWR_ON_N       = Pin(PIN_EXT_PWR_ON_N, Pin.IN) # will switch to output later
 
 POST7_BIT_MASK = 1 << PIN_POST_7
 POST1_BIT_MASK = 1 << PIN_POST_1
 POST0_BIT_MASK = 1 << PIN_POST_0
 POST0_AND_1_BIT_MASK = POST1_BIT_MASK | POST0_BIT_MASK
+
+POST017_BIT_MASK = PIN_POST_7 | POST1_BIT_MASK | POST0_BIT_MASK
+
 CPU_RESET_MASK = 1 << PIN_CPU_RESET_IN
 
 # nb: RP2040 Zero uses a WS2812B - this won't work on that board
 LED = Pin(25, Pin.OUT)
+
 
 @rp2.asm_pio(set_init=[PIO.OUT_LOW, PIO.IN_LOW])
 def rgh12():
@@ -65,7 +102,7 @@ def rgh12():
     wait(0, pin, 0)                       # 9
     label("10")
     jmp(y_dec, "10")                      # 10
-    set(pindirs, 3)                  [3]  # <-- PULSE WIDTH LENGTH OVER HERE (MINUS 1)
+    set(pindirs, 3)                  [1]  # <-- PULSE WIDTH LENGTH OVER HERE IN THE SQUARE BRACKETS (MINUS 1)
     set(pins, 3)                          # 12
     set(pindirs, 1)                       # 13
     set(y, 31)                       [31] # 14
@@ -86,8 +123,6 @@ def rgh12():
 
 pio_sm = None
 
-# set to True for RGH1.3, False for RGH1.2
-USING_GLITCH3_IMAGE = False
 RAPID_RESET = False
 
 def init_sm(reset_assert_delay):
@@ -99,14 +134,12 @@ def init_sm(reset_assert_delay):
     pio_sm.active(0)
     print("restarted sm")
 
-    # change reset output drive params
-    mem32[0x4001c004 + ((SET_PIN_BASE+1)*4)] = 0b01110011
+    # change reset drive params
+    mem32[0x4001c004 + ((SET_PIN_BASE+1)*4)]   = 0b01110011
     if mem32[0x4001c004 + ((SET_PIN_BASE+1)*4)] == 0b01110011:
         print("full steam ahead!!")
     else:
         raise RuntimeError("cannot set I/O drive...")
-    
-
     # the "pll delay" is the amount of time we wait between POST 0xD9
     # and when CPU_PLL_BYPASS is asserted.
     #
@@ -148,9 +181,15 @@ def _force_reset():
     if ENABLE_FAST_RESET_HACK is True:
         # this looks like it's fast, but micropython's interpreter
         # is slow enough for this to actually reset the CPU
-        CPU_RESET_OUT.init(Pin.OUT)
-        CPU_RESET_OUT.value(0)
-        CPU_RESET_OUT.init(Pin.IN)
+        for _ in range(1,10):
+            REQUEST_SOFT_RESET.value(1)
+            sleep(0.025)
+            REQUEST_SOFT_RESET.value(0)
+            sleep(0.025)
+            if (mem32[RP2040_GPIO_IN] & POST017_BIT_MASK) == 0:
+                print("reset ack")
+                return
+        print("WARNING: CPU in coma")
 
 def do_reset_glitch_loop():
     # this is the key to the whole thing - you have to set frequency
@@ -166,6 +205,8 @@ def do_reset_glitch_loop():
     if BRUTE_FORCE_SEARCH is True:
         reset_trial -= BRUTE_FORCE_STEP # because we're adding to it below!
     
+    kronos_bit7_failures = 0
+
     while True:
         if BRUTE_FORCE_SEARCH is True:
             reset_trial += BRUTE_FORCE_STEP
@@ -173,9 +214,22 @@ def do_reset_glitch_loop():
         init_sm(reset_trial)
         LED.value(0)
 
+        # wait for the CPU to go into reset so we don't count POSTs incorrectly
+        if ENABLE_FAST_RESET_HACK is False:
+            while CPU_RESET_IN.value() == 1:
+                pass
+
         while CPU_RESET_IN.value() == 0:
             pass
+
+        # all three of these bits must be low for the reset to have been acknowledged
+        while (mem32[RP2040_GPIO_IN] & POST017_BIT_MASK) != 0:
+            pass
+
         print("CPU active")
+
+        if FORCE_SMC_RESET_ON_TOO_MANY_BIT_7_FAILURES is True:
+            EXT_PWR_ON_N.init(Pin.IN)
 
         timeout = False
         reset_time = ticks_us()
@@ -186,7 +240,9 @@ def do_reset_glitch_loop():
             LED.value(DBG_CPU_POST_OUT7.value())
 
         if timeout is True:
+            # might also be that the CPU is simply powering off
             print("FAIL: CPU stuck in coma")
+            kronos_bit7_failures = 0
             continue
 
         print("D0")
@@ -213,43 +269,69 @@ def do_reset_glitch_loop():
         pio_sm.get()
         pio_sm.active(0)
         
-        # speedup hacks only
-        if ENABLE_FAST_RESET_HACK is True:
-            # if bit 7 still high, the hash check failed
-            if (DBG_CPU_POST_OUT0.value()) != 0:
-                timeout = False
+        # if bit 7 still high, the hash check failed
+        if (DBG_CPU_POST_OUT0.value()) != 0:
+            timeout = False
 
-                reset_time = ticks_us()
-                while (DBG_CPU_POST_OUT0.value()) != 0:
-                    if (ticks_us() - reset_time > 10000):
-                        timeout = True
-                        break
-                
-                if timeout is True:
-                    print("FAIL: POST bit 7 still high")
-                    _force_reset()
-                    LED.value(0)
-                    continue
+            reset_time = ticks_us()
+            while (DBG_CPU_POST_OUT0.value()) != 0:
+                if (ticks_us() - reset_time > 10000):
+                    timeout = True
+                    break
+            
+            if timeout is True:
+                print("FAIL: POST bit 7 still high")
 
-            # RGH1.3 only: wait for POST bits 0/1 to rise - that indicates we got out of CB_X.
-            # if we don't see them in time, the boot has failed
-            if USING_GLITCH3_IMAGE is True and (mem32[RP2040_GPIO_IN] & POST0_AND_1_BIT_MASK) == 0:
-                timeout = False
+                if FORCE_SMC_RESET_ON_TOO_MANY_BIT_7_FAILURES is True:
+                    kronos_bit7_failures += 1
+                    if kronos_bit7_failures >= KRONOS_BIT7_MAX_FAILURES:
+                        print("kronos is being a bitch - FORCING HARD RESET!!")
 
-                reset_time = ticks_us()
-                while (mem32[RP2040_GPIO_IN] & POST0_AND_1_BIT_MASK) == 0:
-                    if (ticks_us() - reset_time > 80000):
-                        timeout = True
-                        break
-                
-                if timeout is True:
-                    # possible the SMC reset on us
-                    if CPU_RESET_IN.value() == 0:
-                        print("FAIL: SMC reset on us")
-                    else:
-                        print("FAIL: POST bits 0/1 did not rise")
-                    _force_reset()
-                    continue
+                        SMC_RST_N.init(Pin.OUT, value = 0)
+                        sleep(0.5)
+                        SMC_RST_N.init(Pin.IN)
+
+                        kronos_bit7_failures = 0
+
+                        # this pin is debounced, or SHOULD be debounced
+                        # so leave it low until the system actually powers back on
+                        EXT_PWR_ON_N.init(Pin.OUT, value = 0)
+                        continue
+
+
+                _force_reset()
+
+                LED.value(0)
+
+                # Kronos consoles tend to crash at 0xDA or 0xDB
+                if HUNT_FOR_RANDOM_VALUES is True:
+                    reset_trial -= 1
+                    if reset_trial < RANDOM_VALUE_MIN_VALUE:
+                        reset_trial = RANDOM_VALUE_RELOAD_VALUE
+
+                continue
+        
+        kronos_bit7_failures = 0
+
+        # RGH1.3 only: wait for POST bits 0/1 to rise - that indicates we got out of CB_X.
+        # if we don't see them in time, the boot has failed
+        if USING_GLITCH3_IMAGE is True and (mem32[RP2040_GPIO_IN] & POST0_AND_1_BIT_MASK) == 0:
+            timeout = False
+
+            reset_time = ticks_us()
+            while (mem32[RP2040_GPIO_IN] & POST0_AND_1_BIT_MASK) == 0:
+                if (ticks_us() - reset_time > 80000):
+                    timeout = True
+                    break
+            
+            if timeout is True:
+                # possible the SMC reset on us
+                if CPU_RESET_IN.value() == 0:
+                    print("FAIL: SMC reset on us")
+                else:
+                    print("FAIL: POST bits 0/1 did not rise")
+                _force_reset()
+                continue
 
         while CPU_RESET_IN.value() != 0:
             LED.value(DBG_CPU_POST_OUT7.value())
