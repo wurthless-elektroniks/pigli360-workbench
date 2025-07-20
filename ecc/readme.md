@@ -26,3 +26,12 @@ HOWEVER:
 There is a good chance the CPU will still crash in CB_B at 0x2E (HWINIT). This is the typical behavior on
 Jaspers. Therefore there is a chance that Glitch3 won't actually speed the boot up much in practice.
 Credit to Octal for this info.
+
+## "Reset Me" ECCs
+
+These are SMC+ ECCs hacked to force a reset when DBG_LED is pulled high. They are infinitely useful for
+systems that need rapid reset speedups during glitch attempts (hi Jasper owners).
+
+I'm only building Glitch3 versions of these for now, as the whole point of Glitch3 is to speed up the boot
+as much as possible. It's possible to use the same hacked SMC with Glitch2 but you gain little performance
+advantage that way.
