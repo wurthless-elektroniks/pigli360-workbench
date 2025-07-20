@@ -25,8 +25,8 @@ Novel glitching concepts implemented here:
   Code is in `rgh12/` with the appropriate ECC images in `ecc/`.
 - EXT_CLK+3: EXT_CLK but with a Glitch3 image. Vastly speeds up glitching attempts on Xenons.
 - RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC, effectively making it RGH3 with a glitch chip.
-  Works, Falcon boots to XeLL, have to test with Jasper as well.
-- Project Muffdiver: The Project Muffin/Mufas approach to RGH1.2.3, with the SMC controlling I2C slowdown. Works on Falcon.
+- Project Muffdiver: The Project Muffin/Mufas approach to RGH1.2.3, with the SMC controlling I2C slowdown. Has
+  problems with a lot of boards, making it less reliable than RGH1.2 or RGH1.3.
 
 Other stuff I could conceptualize:
 - Method to use I2C to disable the 100 MHz CPU clock and inject a slower clock signal in its place.

@@ -13,7 +13,7 @@ from rp2 import PIO
 # ------------------------------------------------------------------------
 
 RESET_DELAY            = 349821  # <-- start at 349821
-ENABLE_FAST_RESET_HACK = True    # <-- set to True to enable rapid resets
+ENABLE_FAST_RESETS     = True    # <-- set to True if SMC is hacked to reset on DBG_LED rise
 BRUTE_FORCE_SEARCH     = False   # <-- set to True to increment reset delay on every attempt
 BRUTE_FORCE_STEP       = 1       # positive = increase, negative = decrease
 
@@ -21,17 +21,21 @@ HUNT_FOR_RANDOM_VALUES    = False
 RANDOM_VALUE_MIN_VALUE    = 349810
 RANDOM_VALUE_RELOAD_VALUE = 349830
 
-USING_GLITCH3_IMAGE = True       # set to True for RGH1.3 (faster glitch attempts), False for RGH1.2 (better supported)
+USING_GLITCH3_IMAGE = True       # set to True for RGH1.3 (faster glitch attempts),
+                                 # False for RGH1.2 (better supported)
 
-# Kronos Mode
-# on kronos boards glitch attempts can fail over and over at 0xDA or 0xDB
+# this is a last resort for the most stubborn boards.
+# on jasper/tonkaset boards glitch attempts can fail over and over at 0xDA or 0xDB
 # and there's no way to get by it. it doesn't matter if you use speedup
 # hacks or vary the timings, the CPU will always get stuck there.
 #
 # if you turn this on, the pico will force a SMC hard reset and turn off
 # everything, then power the system on.
-FORCE_SMC_RESET_ON_TOO_MANY_BIT_7_FAILURES = True # set to True to enable Kronos Mode
-KRONOS_BIT7_MAX_FAILURES = 1
+#
+# this 100% breaks XeLL support - you'll have to hit eject until the thing
+# boots to XeLL, otherwise it'll fall straight to the kernel on a failed attempt.
+FORCE_SMC_RESET_ON_TOO_MANY_BIT_7_FAILURES = True
+BIT7_MAX_FAILURES = 2      # 1 is far more aggressive but can cause premature resets
 
 # scroll down to PIO program to change pulse width
 
@@ -102,7 +106,7 @@ def rgh12():
     wait(0, pin, 0)                       # 9
     label("10")
     jmp(y_dec, "10")                      # 10
-    set(pindirs, 3)                  [1]  # <-- PULSE WIDTH LENGTH OVER HERE IN THE SQUARE BRACKETS (MINUS 1)
+    set(pindirs, 3)                  [3]  # <-- PULSE WIDTH LENGTH OVER HERE IN THE SQUARE BRACKETS (MINUS 1)
     set(pins, 3)                          # 12
     set(pindirs, 1)                       # 13
     set(y, 31)                       [31] # 14
@@ -123,8 +127,6 @@ def rgh12():
 
 pio_sm = None
 
-RAPID_RESET = False
-
 def init_sm(reset_assert_delay):
     global pio_sm
     pio_sm = rp2.StateMachine(0, rgh12, freq = 48000000, in_base=DBG_CPU_POST_OUT7, set_base=CPU_PLL_BYPASS)
@@ -136,10 +138,9 @@ def init_sm(reset_assert_delay):
 
     # change reset drive params
     mem32[0x4001c004 + ((SET_PIN_BASE+1)*4)]   = 0b01110011
-    if mem32[0x4001c004 + ((SET_PIN_BASE+1)*4)] == 0b01110011:
-        print("full steam ahead!!")
-    else:
+    if mem32[0x4001c004 + ((SET_PIN_BASE+1)*4)] != 0b01110011:
         raise RuntimeError("cannot set I/O drive...")
+    
     # the "pll delay" is the amount of time we wait between POST 0xD9
     # and when CPU_PLL_BYPASS is asserted.
     #
@@ -178,7 +179,7 @@ def init_sm(reset_assert_delay):
 
 
 def _force_reset():
-    if ENABLE_FAST_RESET_HACK is True:
+    if ENABLE_FAST_RESETS is True:
         # this looks like it's fast, but micropython's interpreter
         # is slow enough for this to actually reset the CPU
         for _ in range(1,10):
@@ -205,7 +206,7 @@ def do_reset_glitch_loop():
     if BRUTE_FORCE_SEARCH is True:
         reset_trial -= BRUTE_FORCE_STEP # because we're adding to it below!
     
-    kronos_bit7_failures = 0
+    bit7_failures = 0
 
     while True:
         if BRUTE_FORCE_SEARCH is True:
@@ -215,7 +216,7 @@ def do_reset_glitch_loop():
         LED.value(0)
 
         # wait for the CPU to go into reset so we don't count POSTs incorrectly
-        if ENABLE_FAST_RESET_HACK is False:
+        if ENABLE_FAST_RESETS is False:
             while CPU_RESET_IN.value() == 1:
                 pass
 
@@ -228,6 +229,7 @@ def do_reset_glitch_loop():
 
         print("CPU active")
 
+        # stubborn system mode: set this (debounced) pin back to input
         if FORCE_SMC_RESET_ON_TOO_MANY_BIT_7_FAILURES is True:
             EXT_PWR_ON_N.init(Pin.IN)
 
@@ -242,7 +244,7 @@ def do_reset_glitch_loop():
         if timeout is True:
             # might also be that the CPU is simply powering off
             print("FAIL: CPU stuck in coma")
-            kronos_bit7_failures = 0
+            bit7_failures = 0
             continue
 
         print("D0")
@@ -281,17 +283,19 @@ def do_reset_glitch_loop():
             
             if timeout is True:
                 print("FAIL: POST bit 7 still high")
-
                 if FORCE_SMC_RESET_ON_TOO_MANY_BIT_7_FAILURES is True:
-                    kronos_bit7_failures += 1
-                    if kronos_bit7_failures >= KRONOS_BIT7_MAX_FAILURES:
-                        print("kronos is being a bitch - FORCING HARD RESET!!")
+                    bit7_failures += 1
+                    if bit7_failures >= BIT7_MAX_FAILURES:
+                        print("bit7 failure threshold exceeded - FORCING HARD RESET!!")
 
+                        # resetting the SMC also hard resets everything.
+                        # the delay here doesn't really matter as it still takes a bit
+                        # for everything to warm up
                         SMC_RST_N.init(Pin.OUT, value = 0)
-                        sleep(0.5)
+                        sleep(0.005)
                         SMC_RST_N.init(Pin.IN)
 
-                        kronos_bit7_failures = 0
+                        bit7_failures = 0
 
                         # this pin is debounced, or SHOULD be debounced
                         # so leave it low until the system actually powers back on
@@ -303,7 +307,6 @@ def do_reset_glitch_loop():
 
                 LED.value(0)
 
-                # Kronos consoles tend to crash at 0xDA or 0xDB
                 if HUNT_FOR_RANDOM_VALUES is True:
                     reset_trial -= 1
                     if reset_trial < RANDOM_VALUE_MIN_VALUE:
@@ -311,7 +314,7 @@ def do_reset_glitch_loop():
 
                 continue
         
-        kronos_bit7_failures = 0
+        bit7_failures = 0
 
         # RGH1.3 only: wait for POST bits 0/1 to rise - that indicates we got out of CB_X.
         # if we don't see them in time, the boot has failed
