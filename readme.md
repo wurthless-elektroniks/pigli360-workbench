@@ -27,15 +27,17 @@ Novel glitching concepts implemented here:
 - RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC, effectively making it RGH3 with a glitch chip.
 - Project Muffdiver: The Project Muffin/Mufas approach to RGH1.2.3, with the SMC controlling I2C slowdown. Has
   problems with a lot of boards, making it less reliable than RGH1.2 or RGH1.3.
+- CAboom: Reset glitch attack against the bootrom (CA). All RGH attacks target CB, but none so far have
+  targeted the signature check in the bootrom, and that's understandable because the RSA signature check
+  takes 200 ms (with CPU_EXT_CLK_EN slowdown it's around 2 seconds) and is too unreliable to glitch reliably. However,
+  you **can** glitch the bootrom and skip using Microsoft code altogether. If BadUpdate can go from being
+  a 20 minute prayer fest to a viable softmod, I'm pretty sure someone can make a stable bootrom exploit...
 
 Other stuff I could conceptualize:
 - Method to use I2C to disable the 100 MHz CPU clock and inject a slower clock signal in its place.
   Should be far more effective than EXT_CLK. Likely impossible without a properly temperature compensated
   external clock generator.
 - I2C + EXT_CLK slowdown for Zephyrs. Might not be stable.
-- Reset glitch attack against the bootrom. All RGH attacks target CB, but none so far have
-  targeted the signature check in the bootrom. Given the 360 has been out for 20 years I'm not
-  getting my hopes up for this one.
 - Power glitch hack against Winchester boards. Setup would likely need to be timed on Corona and
   monitor NAND accesses, as the Oban CGPU doesn't output POST data. Slowdown would be accomplished
   by I2C slowdown or a manual clock override. Will be dangerous (latchup inside the CGPU a major
