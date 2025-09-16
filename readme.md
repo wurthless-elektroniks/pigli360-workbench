@@ -22,14 +22,14 @@ Common phat modding methods:
 Novel glitching concepts implemented here:
 - RGH1.3: RGH1.2 but with a RGH3-like image with the CB_X intermediate loader. Boots in around the same amount
   of time as RGH1.2, but with the advantage that we can easily detect a failed boot and restart immediately.
-  Code is in `rgh12/` with the appropriate ECC images in `ecc/`.
+  Has since been converted to run with the SMC and a glitch chip (see [here](https://github.com/wurthless-elektroniks/RGH1.3)).
 - EXT_CLK+3: EXT_CLK but with a Glitch3 image. Vastly speeds up glitching attempts on Xenons.
 - RGH1.2.3: Basically RGH1.2 with I2C slowdown and RGH3 ECC, effectively making it RGH3 with a glitch chip.
 - Project Muffdiver: The Project Muffin/Mufas approach to RGH1.2.3, with the SMC controlling I2C slowdown. Has
   problems with a lot of boards, making it less reliable than RGH1.2 or RGH1.3.
 - CAboom: Reset glitch attack against the bootrom (CA). All RGH attacks target CB, but none so far have
   targeted the signature check in the bootrom, and that's understandable because the RSA signature check
-  takes 200 ms (with CPU_EXT_CLK_EN slowdown it's around 2 seconds) and is too unreliable to glitch reliably. However,
+  takes 200 ms (with CPU_EXT_CLK_EN slowdown it's around 2 seconds) and is too unstable to glitch reliably. However,
   you **can** glitch the bootrom and skip using Microsoft code altogether. If BadUpdate can go from being
   a 20 minute prayer fest to a viable softmod, I'm pretty sure someone can make a stable bootrom exploit...
 
